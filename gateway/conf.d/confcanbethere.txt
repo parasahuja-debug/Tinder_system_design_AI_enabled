@@ -1,0 +1,22 @@
+Loadbalancing - 
+upstream backend {
+    
+    server 10.0.0.1;
+    server 10.0.0.2;
+}
+---------------------
+Ratelimit
+limit_req_zone $binary_remote_addr zone=one:10m rate=5r/s;
+
+location /profile {
+    limit_req zone=one burst=10;
+}
+----------------
+caching 
+proxy_cache_path /tmp/cache levels=1:2 keys_zone=my_cache:10m;
+
+location /profile {
+    proxy_cache my_cache;
+}
+------------------
+basicauth
