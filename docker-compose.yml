@@ -1,0 +1,63 @@
+# One compose file brings up the whole local system. Service names here double
+# as DNS hostnames on the compose network, so they must match what nginx already
+# expects (auth-service:8002, profile-service:8001).
+
+services:
+  # Single shared Postgres for every service. pgvector image (not stock
+  # postgres) is chosen now so Day 5's chatbot can `CREATE EXTENSION vector`
+  # without a late image swap. One DB, one table set per service.
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tinder # dedicated DB for this project; the image creates it on first init
+    ports:
+      - "5432:5432" # exposed to host so the Postgres MCP server / psql can inspect it
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Services wait on this so they don't race the DB and crash on startup.
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Issues/verifies JWTs; owns the users table. Only service with JWT_SECRET.
+  auth-service:
+    build: ./auth_service
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
+      JWT_SECRET: dev-secret-change-me # dev only; a real deploy injects a real secret
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8002" # reachable only inside the compose network, never from the host
+
+  # Profile data; trusts the gateway's X-User-Id header, never sees the token.
+  profile-service:
+    build: ./profile_service
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8001"
+
+  # nginx: the only thing clients talk to. Routes + gates protected routes via
+  # auth_request. Config is mounted (not baked) so edits don't need a rebuild.
+  gateway:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./gateway/conf.d:/etc/nginx/conf.d:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      - auth-service
+      - profile-service
+
+volumes:
+  pgdata: # named volume so DB data survives `docker compose down`

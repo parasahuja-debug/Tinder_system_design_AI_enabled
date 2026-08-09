@@ -35,8 +35,22 @@ only place that context lives.
   lat/long + age + gender filters (not real sharding — that's backlog).
 - **Auth**: real, minimal auth-service, verified end-to-end (401 → register
   → login → 200), not stubbed.
+<!-- 2026-08-09: replaced — the stock `postgres` image has no pgvector, which
+     Day 5 depends on (`CREATE EXTENSION vector` would fail). Old line kept
+     below for history per standing rule.
 - **Data store**: one shared local Postgres (plain `postgres` image, not the
   full Supabase stack). `Supabase_README.md` stays as background notes only.
+-->
+- **Data store**: one shared local Postgres, still not the full Supabase
+  stack — but use the `pgvector/pgvector:pg16` image rather than stock
+  `postgres`, because Day 5's chatbot stores embeddings via the `pgvector`
+  extension and the stock image can't `CREATE EXTENSION vector`. Same single
+  container otherwise; pick this image on Day 1 so it isn't a late swap.
+  `Supabase_README.md` stays as background notes only.
+- **Schema ownership**: each service owns its own tables in the shared DB and
+  creates them itself via `Base.metadata.create_all()` on startup — no
+  migration tool this week. Acceptable for a build week (like the in-memory
+  session map); a real migration story (Alembic) is backlog.
 - **Coding standard**: every function commented with what it is and why it's
   there; non-obvious lines/line-groups get inline comments too. Applies to
   every service and the Angular code.
@@ -110,9 +124,30 @@ Each backend service keeps its own lean `CLAUDE.md`.
   `profile-service`, `frontend`. Internal names/ports match what
   `gateway/conf.d/default.conf` already expects.
 - `auth_service/main.py`: register, login (issue signed JWT), `/validate`
-  for nginx's `auth_request`. Every function commented with purpose + why.
+  for nginx's `auth_request`. `/validate` returns the user id in an
+  `X-User-Id` **response header** (not just the body) so nginx can capture it.
+  Every function commented with purpose + why.
+- **Wire the `X-User-Id` handoff in nginx** (currently missing from
+  `gateway/conf.d/default.conf`, which only calls `auth_request` and forwards
+  `Authorization`). The auth model in `CLAUDE.md` depends on these two lines
+  and they don't exist yet:
+  - in `location = /auth/validate`: `auth_request_set $user_id
+    $upstream_http_x_user_id;`
+  - in every protected location: `proxy_set_header X-User-Id $user_id;`
+  Without them, downstream services get no user id and the whole "gateway is
+  the only thing that authenticates" model doesn't actually work.
+- **Config via env, not hardcoded hosts.** `profile_service/main.py` currently
+  hardcodes `postgresql://...@localhost:5432/...`; inside compose the DB host
+  is `db`, not `localhost`. Every service reads `DATABASE_URL` (and JWT
+  secret, etc.) from the environment, set in `docker-compose.yml`. Fix this on
+  Day 1 as the pattern every later service copies.
+- **CORS / dev proxy.** The Angular dev server (:4200) hitting the gateway
+  (:8080) is cross-origin. Pick one up front — an Angular dev-server proxy
+  (`proxy.conf.json`) or CORS headers at the gateway — or Register/Login
+  won't talk to auth. Dev proxy is cleaner (keeps the browser same-origin).
 - Verify for real: curl `/profile` unauthenticated → 401; register/login →
-  token; curl with token → passes through.
+  token; curl with token → passes through **and the upstream sees a correct
+  `X-User-Id`**.
 - Angular: scaffold app, Register + Login pages, route guard.
 - **Dev tooling**: `.mcp.json` Postgres MCP server; `.claude/skills/
   fastapi-endpoint/` skill; `.claude/settings.json` post-edit lint/test
@@ -123,8 +158,16 @@ Each backend service keeps its own lean `CLAUDE.md`.
 
 ### Day 2 — Profile + Image service
 - Extend `profile_service`: require auth, add age/gender/city/lat/long/bio.
+- **Reconcile the route path.** nginx proxies `location /profile` to the
+  service preserving the path, but the only route today is `POST
+  /create-profile` — so `/profile` 404s in the app. Mount the profile routes
+  under `/profile/...` (or rewrite in nginx) so the gateway path and the
+  FastAPI path actually agree. Profile writes take the user id from the
+  gateway's `X-User-Id` header, not from the request body.
 - `image_service/main.py`: writes to `image_store/<user_id>/<uuid>.<ext>`,
   stores `(image_id, profile_id, url)` in Postgres; cap 5 images/user.
+- Add `image_store/` to `.gitignore` (there's no `.gitignore` yet) so uploaded
+  binaries never get committed.
 - New nginx route for `/images`.
 - Angular: profile create/edit with multi-image upload, profile view.
 - README: add Profile/Image sections. `/test` gains real assertions for
@@ -148,6 +191,14 @@ Each backend service keeps its own lean `CLAUDE.md`.
   (comment notes this doesn't survive a restart and why that's fine now).
 - `direct_msg/main.py`: WebSocket endpoint; confirms match via
   matcher-service before allowing a message; persists messages.
+- **WebSocket auth gotcha.** `auth_request` + the WS upgrade don't compose
+  cleanly, and a browser can't set an `Authorization` header on a WebSocket.
+  So the token rides as a query param (or subprotocol) and is validated
+  either by a pre-connect HTTP call to auth or inside `direct_msg` itself —
+  this is the one place the "only the gateway authenticates" rule bends, and
+  the reason gets a comment. nginx also needs the upgrade headers
+  (`proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection
+  "upgrade";`) on the chat location.
 - Angular: Chat page per match.
 - README: add Messaging section.
 - **Verification**: two matched test users exchange messages live in separate
@@ -155,8 +206,11 @@ Each backend service keeps its own lean `CLAUDE.md`.
 
 ### Day 5 — Support Chatbot (RAG + memory) + LangSmith tracing
 - `support_chatbot_service/main.py`: chunks & embeds `README.md`/service
-  docs locally (e.g. a small local embedding model), stores vectors in
-  Postgres via `pgvector` (reuses the existing DB, no new infra), retrieves
+  docs locally (a small local embedding model — e.g. `all-MiniLM`, keep the
+  dependency light; `sentence-transformers`+`torch` is a heavy container so
+  size it consciously), stores vectors in Postgres via `pgvector` (reuses the
+  existing DB — this is why Day 1 uses the `pgvector/pgvector` image — no new
+  infra; run `CREATE EXTENSION IF NOT EXISTS vector` on startup), retrieves
   relevant chunks per question, calls Claude for the answer.
 - Conversation memory: persist `(session_id, role, message)` per user so
   follow-ups keep context; loaded back in on each turn.

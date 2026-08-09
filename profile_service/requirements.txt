@@ -1,0 +1,6 @@
+# profile_service runtime deps. No JWT/bcrypt here: this service trusts the
+# gateway's X-User-Id header and never handles tokens or passwords itself.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
