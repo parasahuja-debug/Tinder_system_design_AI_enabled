@@ -59,5 +59,19 @@ services:
       - auth-service
       - profile-service
 
+  # Dev-only browser UI for the DB (the "Studio-like" page). It speaks HTTP to
+  # you on 8081 and the Postgres wire protocol to `db` internally — which is why
+  # you can't just point a browser at 5432. sslmode=disable because our local
+  # Postgres has no TLS. Not part of the app; purely for inspecting tables/rows.
+  pgweb:
+    image: sosedoff/pgweb:latest
+    environment:
+      PGWEB_DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder?sslmode=disable
+    ports:
+      - "8081:8081"
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata: # named volume so DB data survives `docker compose down`

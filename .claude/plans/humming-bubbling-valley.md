@@ -59,8 +59,16 @@ only place that context lives.
   curl/browser check, or an assertion against Postgres).
 - **Support chatbot**: RAG over our own README/docs (no external knowledge),
   with persisted conversation memory per user/session so follow-up questions
-  keep context. Answers questions about how to use the app, not live account
+  keep context.
+  <!-- 2026-08-09: replaced — decided to bring live-DB access into Day 5 scope
+       via MCP (the chatbot's LLM calls the Postgres MCP server as a tool), so
+       the chatbot is no longer docs-only. Old clause kept for history:
+  Answers questions about how to use the app, not live account
   data (querying live account state is a backlog idea, not this week).
+  -->
+  Beyond docs, the chatbot's LLM can also answer questions grounded in live
+  account/DB data by calling the Postgres MCP server as a tool (see Day 5) —
+  so it does both RAG-over-docs and guarded live queries.
 - **Observability**: a real metrics stack — Prometheus + Grafana — for
   system/business metrics (logins, chat volume, DB size). LangSmith
   separately traces the chatbot's LLM calls (via `wrap_anthropic`), which is
@@ -71,9 +79,19 @@ only place that context lives.
   constructed later as an independent piece of work.
 - **MCP**: a Postgres MCP server added to the project (`.mcp.json`) so Claude
   Code itself can query/inspect the local DB directly while building and
-  debugging, instead of shelling out to `psql` ad hoc. (Exposing that same
-  server as a live tool inside the chatbot's own reasoning loop is a backlog
-  idea, not core scope, given the chatbot is RAG+memory only for now.)
+  debugging, instead of shelling out to `psql` ad hoc.
+  <!-- 2026-08-09: replaced — promoted the chatbot's live-DB-via-MCP use from
+       backlog into Day-5 core scope. Old parenthetical kept for history:
+  (Exposing that same server as a live tool inside the chatbot's own reasoning
+  loop is a backlog idea, not core scope, given the chatbot is RAG+memory only
+  for now.)
+  -->
+  On Day 5 this same Postgres MCP server is additionally exposed as a live tool
+  inside the support chatbot's reasoning loop, so the chatbot's LLM can run
+  guarded Postgres queries to answer live-data questions. This is the one place
+  a service-side component reaches Postgres through MCP rather than a direct
+  driver — justified because the consumer there is an LLM making runtime
+  decisions, not deterministic app code (app services still use SQLAlchemy).
 - **Skills**: a project skill capturing "how we write a new FastAPI
   endpoint here" (comment standard, error-handling shape, how to register
   the route in nginx) so every service written this week follows the same
@@ -214,14 +232,25 @@ Each backend service keeps its own lean `CLAUDE.md`.
   relevant chunks per question, calls Claude for the answer.
 - Conversation memory: persist `(session_id, role, message)` per user so
   follow-ups keep context; loaded back in on each turn.
+- **Live data via MCP**: expose the project's Postgres MCP server (`.mcp.json`)
+  as a tool the chatbot's LLM can call, so questions needing live DB state
+  (e.g. "how many matches do I have?", "what's my profile city?") are answered
+  by running guarded, read-only Postgres queries through MCP — alongside RAG
+  over the docs. Scope the tool to safe, parameterized/read-only queries and
+  the requesting user's own rows (the chatbot knows the caller's `X-User-Id`),
+  so it can't be used to read arbitrary accounts. This is deliberately the one
+  spot where a runtime component uses MCP for DB access, because the caller is
+  an LLM, not deterministic app code.
 - Wrap the Anthropic client with LangSmith's `wrap_anthropic` so every
-  chatbot call is traced (prompt, retrieved context, response, latency).
+  chatbot call is traced (prompt, retrieved context, response, latency, and
+  any MCP tool calls it made).
 - Angular: Support/Help chat widget.
 - README: add Support Chatbot section (architecture, not "how we thought of
   it").
 - **Verification**: ask a support question grounded in README content, ask a
-  follow-up that depends on memory, confirm both traces show up in
-  LangSmith.
+  follow-up that depends on memory, ask a live-data question that forces an MCP
+  Postgres query (e.g. match count) and confirm the answer matches the DB;
+  confirm all traces (including the MCP tool call) show up in LangSmith.
 - **End of day**: pause for a short separate discussion to scope the
   precision/recall eval (golden Q&A set construction, scoring approach) —
   planned, not built, today.
@@ -260,7 +289,11 @@ Each backend service keeps its own lean `CLAUDE.md`.
 - Write a **Day 8+ backlog**: real sharded/Cassandra recommendation engine,
   MinIO/S3 for images, JWT refresh + hardening, per-service databases, the
   chatbot precision/recall eval (golden set + scoring, scoped on Day 5),
-  live-DB tool access for the chatbot via the MCP server, automated test
+  <!-- 2026-08-09: removed from backlog — "live-DB tool access for the chatbot
+       via the MCP server" is now Day-5 core scope, not backlog. Old text kept:
+  live-DB tool access for the chatbot via the MCP server,
+  -->
+  automated test
   suite expansion, cloud deployment.
 
 ## How we'll actually work each day (Claude Code workflow)

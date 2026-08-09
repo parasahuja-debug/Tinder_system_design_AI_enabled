@@ -1,0 +1,13 @@
+{
+  "//": "Postgres MCP server. Two consumers over the project's life, both LLM-side (never the app services, which use SQLAlchemy directly): (1) Claude Code now, to inspect/query the tinder DB while building instead of shelling into psql; (2) the Day-5 support chatbot's LLM, which calls this same server as a tool for guarded live-data queries. Uses localhost:5432 because Claude Code runs on the host, where compose publishes the DB port.",
+  "mcpServers": {
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://postgres:postgres@localhost:5432/tinder"
+      ]
+    }
+  }
+}
