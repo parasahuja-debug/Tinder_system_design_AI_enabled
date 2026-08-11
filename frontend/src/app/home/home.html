@@ -1,0 +1,14 @@
+<div class="home-page">
+  <h1>You're in</h1>
+
+  @if (userId()) {
+    <p>Authenticated as <code>{{ userId() }}</code></p>
+    <p class="hint">This came from profile_service via the gateway's X-User-Id handoff.</p>
+  } @else if (errorMessage()) {
+    <p class="error">{{ errorMessage() }}</p>
+  } @else {
+    <p>Loading profile…</p>
+  }
+
+  <button (click)="logout()">Log out</button>
+</div>

@@ -22,3 +22,25 @@
 - /test command- 
 - fastapi-endpoint skill to create a good API and note the right things for the purpose.
 - building Frontend - 
+    npx -y -p @angular/cli@22 ng new frontend --style=css --ssr=false --skip-git --defaults
+    > ng new is Angular's scaffolding generator. It created the folder structure and ran npm install, which is where the bulk of the "lots of folders" came from. 
+
+- create - proxy.conf.json (URLs for profile page and /auth)
+- create angular.json - point angular.json's serve target at that proxy file, so ng serve picks it up automatically.
+    Post this edit- ng serve (i.e. npm start) will now route /auth/* and /profile/* calls to the gateway.
+- create app/app.config.ts
+- create app/auth.service.ts (called through app.config.ts)
+- create app/auth.interceptor.ts
+- create app/auth.guard.ts
+- create app/login/login.ts
+- create app/login/login.html
+- create app/register/register.ts
+- create app/register/register.html
+- create app/home/home.ts
+- create app/home/home.html
+- now mapping - create app/app.routes.ts (login/register/home)
+- create - app.html.generated-placeholder - preserve ng new generated
+- edit app.html basis our requirement
+- edit app.ts 
+- edit styles.css - global styling file
+

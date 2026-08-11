@@ -25,3 +25,20 @@ image_store/
 frontend/node_modules/
 frontend/dist/
 frontend/.angular/
+
+# --- Third-party community skills (mattpocock/skills, via `npx skills add`) ---
+# The real skill files live in .agents/; the entries under .claude/skills/ are
+# symlinks into it. We do NOT ship these by default — only skills we actually
+# adopt get committed. So ignore the whole .agents/ tree and every skill under
+# .claude/skills/, then explicitly un-ignore the ones we keep.
+/.agents/
+/.claude/skills/*
+# Our own hand-written skill stays tracked.
+!/.claude/skills/fastapi-endpoint/
+# ADOPTION: to ship a mattpocock skill later, materialize it into a real tracked
+# dir (copy .agents/skills/<name>/ -> .claude/skills/<name>/, replacing the
+# symlink) and add a negation here, e.g.:
+#   !/.claude/skills/teach/
+# The `skills` CLI manifest lists the whole installed (not-shipped) set, so it's
+# ignored too; adopted skills are tracked as real dirs, not via this lock.
+/skills-lock.json

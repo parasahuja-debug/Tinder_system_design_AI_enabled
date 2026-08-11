@@ -1,0 +1,13 @@
+{
+  "//": "Angular dev-server proxy. The app runs on :4200 and the gateway on :8080 — different origins, which would trigger CORS. Instead of adding CORS headers at the gateway, we forward API paths from the dev server to the gateway so the browser only ever sees one origin (:4200). Only backend paths are proxied; everything else is served by Angular.",
+  "/auth": {
+    "target": "http://localhost:8080",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/profile": {
+    "target": "http://localhost:8080",
+    "secure": false,
+    "changeOrigin": true
+  }
+}
