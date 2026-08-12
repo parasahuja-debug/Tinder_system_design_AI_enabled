@@ -1,6 +1,13 @@
 <div class="home-page">
-  <h1>You're in</h1>
+  <div class="page-header">
+    <h1>Your profile</h1>
+    <button class="logout-button" (click)="logout()">Log out</button>
+  </div>
 
+  <!-- 2026-08-13: replaced — old block just showed the authenticated user
+       id to prove the auth chain worked. profile_service now returns real
+       data (or 404), so this is the actual create/edit form. Kept for
+       history per standing rule:
   @if (userId()) {
     <p>Authenticated as <code>{{ userId() }}</code></p>
     <p class="hint">This came from profile_service via the gateway's X-User-Id handoff.</p>
@@ -9,6 +16,119 @@
   } @else {
     <p>Loading profile…</p>
   }
+  -->
+  @if (mode() === 'loading') {
+    <p>Loading profile…</p>
+  } @else {
+    <!-- Form and photo panel sit side by side (see .profile-layout), rather
+         than the photo panel only appearing after the form is done — the
+         panel is always visible, just locked until mode() is 'edit'. -->
+    <div class="profile-layout">
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      <label>
+        Name
+        <input type="text" formControlName="name" />
+      </label>
 
+      <label>
+        Age
+        <input type="number" formControlName="age" />
+      </label>
+
+      <label>
+        Gender
+        <input type="text" formControlName="gender" />
+      </label>
+
+      <label>
+        State
+        <select formControlName="state" (change)="onStateChange()">
+          <option value="" disabled>Select a state</option>
+          @for (s of INDIA_STATES; track s) {
+            <option [value]="s">{{ s }}</option>
+          }
+        </select>
+      </label>
+
+      <label>
+        City
+        <select formControlName="city">
+          <option value="" disabled>Select a city</option>
+          @for (c of citiesForState(); track c) {
+            <option [value]="c">{{ c }}</option>
+          }
+        </select>
+      </label>
+
+      <!-- No lat/long inputs — auto-filled from the browser's location (see
+           captureLocation in home.ts), never typed by the user. -->
+      @if (locationError()) {
+        <p class="error">
+          {{ locationError() }}
+          <button type="button" class="link-button" (click)="retryLocation()">Retry</button>
+        </p>
+      }
+
+      <label>
+        Bio
+        <textarea formControlName="bio" maxlength="500"></textarea>
+        <span class="char-count">{{ form.controls.bio.value.length }}/500</span>
+      </label>
+
+      @if (errorMessage()) {
+        <p class="error">{{ errorMessage() }}</p>
+      }
+
+      @if (saved()) {
+        <p class="hint">Saved.</p>
+      }
+
+      <button
+        type="submit"
+        [disabled]="form.invalid || submitting() || (mode() === 'edit' && form.pristine)"
+      >
+        {{ submitting() ? 'Saving…' : (mode() === 'create' ? 'Create profile' : 'Save changes') }}
+      </button>
+    </form>
+
+    <div class="images-section" [class.locked]="mode() === 'create'" [class.highlight]="justCreated()">
+      <h2>Photos</h2>
+
+      @if (mode() === 'create') {
+        <p class="locked-message">Complete your profile to unlock photo uploads.</p>
+      } @else {
+        @if (justCreated()) {
+          <p class="step-hint">Unlocked — add a few photos</p>
+        }
+
+        <div class="image-gallery">
+          @for (img of images(); track img.image_id) {
+            <img [src]="img.objectUrl" alt="Profile photo" />
+          }
+        </div>
+
+        @if (imageError()) {
+          <p class="error">{{ imageError() }}</p>
+        }
+
+        <label class="upload-label">
+          {{ uploadingImage() ? 'Uploading…' : 'Add photo' }}
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            [disabled]="uploadingImage()"
+            (change)="onFileSelected($event)"
+            hidden
+          />
+        </label>
+      }
+    </div>
+    </div>
+  }
+
+  <!-- 2026-08-13: moved — logout used to sit at the bottom of the page.
+       Moved into .page-header (top-right, next to the title) above. Kept
+       for history per standing rule:
   <button (click)="logout()">Log out</button>
+  -->
 </div>

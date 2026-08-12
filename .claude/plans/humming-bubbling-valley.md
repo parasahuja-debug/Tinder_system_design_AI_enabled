@@ -194,6 +194,15 @@ Each backend service keeps its own lean `CLAUDE.md`.
   disk match DB rows; reload confirms persistence.
 
 ### Day 3 — Discovery, Recommendation, Swipe/Match
+- **Frontend page split, deferred from Day 2 (2026-08-13):** Day 2 kept the
+  profile form + photo upload on a single repurposed `Home` component to
+  avoid new routes mid-build. Now that Day 3 needs `Home` to become the
+  actual swipe deck, split it for real: `Home` (`/`, the card stack),
+  `Profile` (`/profile`, the create/edit form, moved out of `Home`).
+  **Decided (2026-08-13): photo upload does NOT get its own route/page** —
+  it stays as an inline preview panel adjacent to the profile form (the
+  side-by-side locked/unlocked pattern already built Day 2), just carried
+  over into the new `Profile` component. `authGuard` applies to both routes.
 - `recommendation_service/main.py`: bounding-box + age/gender candidate
   feed, excludes already-swiped profiles. Comments explain the tradeoff vs.
   a real sharded approach.

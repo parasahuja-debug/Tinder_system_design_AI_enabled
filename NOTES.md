@@ -86,6 +86,35 @@
         Day 1 version just echoed X-User-Id back to prove the gateway wiring worked — it never touched the database. Now it does a real Profile lookup for that user, returning all the fields, or a 404 if they haven't created a profile yet.
     Adding /Put profile - if there is a need to update the profile.
 
-- 
+- Add fresh image Service
+    **key decisions :**
+        Image limit - 5
+        Image extensions (check is added later).
+        Some extensions are deliberately missed to cater the attacks. 
+            Deliberately excluding .svg: SVG is XML, and XML can embed script tags.
+            Not handling .heic (the iPhone default format): most browsers can't render it natively.
+        File size cap is needed.
+    Image Schema (surrogate key concept because 1-many relationship, not fk/pk like profile and user)
+    get_user_id helper - **no sharing with profile service as each service runs on its own container, 4 lines can cause coupling**
+    /post method in images - upload an image
+        Image table and User table is linked (through userid column)
+        First file write then DB update.
+        If DB fails, file is removed.
+    /get images - all images information
+        this is what the Angular profile view will call to render existing thumbnails, and what makes the "reload confirms persistence" verification step possible later.
+    /get imageid - get image one at a time for rendering, browser would ask it.
+
+- Adding entry in Docker-compose.yml
+- Update nginx/default conf - to add image service
+- Frontend :
+    - new profile.service.ts : listImages/uploadImage/getImageBlob methods - all API calls of image service
+        A new service, same shape as auth.service.ts — owns talking to /profile. Profile mirrors what GET /profile returns; ProfileRequest is Profile minus user_id
+    - Edit home.ts - has profile create/edit logic
+    - Edit home.html - provides profile info now, image section
+    - Edit global styles.css
+    - India-locations.ts - all state and city names of india to render on form, home.ts to refer
+
+
+    
 
 

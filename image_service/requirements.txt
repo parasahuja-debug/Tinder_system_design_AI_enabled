@@ -1,0 +1,8 @@
+# image_service runtime deps. Same base as profile_service, plus
+# python-multipart: FastAPI needs it to parse multipart/form-data bodies,
+# which is how file uploads (UploadFile/File) are actually encoded over HTTP.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+python-multipart==0.0.20

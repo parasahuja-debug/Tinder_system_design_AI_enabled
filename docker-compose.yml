@@ -46,6 +46,25 @@ services:
     expose:
       - "8001"
 
+  # Owns uploaded images: binary files on disk + a Postgres row per image.
+  # Trusts the gateway's X-User-Id header, same as profile-service.
+  image-service:
+    build: ./image_service
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
+      IMAGE_STORE_DIR: /app/image_store
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8003"
+    volumes:
+      # Bind mount (not an anonymous volume): ties the container path to a
+      # real folder in the repo, so uploaded files are visible on the host at
+      # ./image_store/ and survive `docker compose down` — needed to actually
+      # verify "file on disk matches DB row" from outside the container.
+      - ./image_store:/app/image_store
+
   # nginx: the only thing clients talk to. Routes + gates protected routes via
   # auth_request. Config is mounted (not baked) so edits don't need a rebuild.
   gateway:
@@ -58,6 +77,7 @@ services:
     depends_on:
       - auth-service
       - profile-service
+      - image-service
 
   # Dev-only browser UI for the DB (the "Studio-like" page). It speaks HTTP to
   # you on 8081 and the Postgres wire protocol to `db` internally — which is why

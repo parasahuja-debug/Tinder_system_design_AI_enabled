@@ -50,6 +50,7 @@ class Profile(Base):
     name = Column(String, nullable=False)
     age = Column(Integer, nullable=False)
     gender = Column(String, nullable=False)  # feeds Day 3's recommendation filter
+    state = Column(String, nullable=False)  # Indian state — two states can share a city name, so this is stored separately, not folded into city
     city = Column(String, nullable=False)
     lat = Column(Float, nullable=False)   # feeds Day 3's bounding-box candidate query
     long = Column(Float, nullable=False)  # feeds Day 3's bounding-box candidate query
@@ -65,6 +66,7 @@ class ProfileRequest(BaseModel):
     name: str
     age: int
     gender: str
+    state: str
     city: str
     lat: float
     long: float
@@ -124,6 +126,7 @@ def create_profile(profile: ProfileRequest, x_user_id: str = Header(default=None
             name=profile.name,
             age=profile.age,
             gender=profile.gender,
+            state=profile.state,
             city=profile.city,
             lat=profile.lat,
             long=profile.long,
@@ -161,6 +164,7 @@ def get_profile(x_user_id: str = Header(default=None)):
             "name": profile.name,
             "age": profile.age,
             "gender": profile.gender,
+            "state": profile.state,
             "city": profile.city,
             "lat": profile.lat,
             "long": profile.long,
@@ -183,6 +187,7 @@ def update_profile(profile: ProfileRequest, x_user_id: str = Header(default=None
         existing.name = profile.name
         existing.age = profile.age
         existing.gender = profile.gender
+        existing.state = profile.state
         existing.city = profile.city
         existing.lat = profile.lat
         existing.long = profile.long

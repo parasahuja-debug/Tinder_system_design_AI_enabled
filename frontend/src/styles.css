@@ -1,8 +1,12 @@
 /* You can add global styles to this file, and also import other style files */
 
-/* Minimal global styling for the auth pages (login/register) and home page.
-   Kept plain on purpose — Day 1's job is a working, verifiable auth flow, not
-   visual design. */
+/* 2026-08-13: replaced — old styling was intentionally plain/generic (Day
+   1's job was a working, verifiable auth flow, not visual design).
+   Redesigned with Tinder's actual color language (hot-pink/orange gradient,
+   rounded pill buttons, bold typography) across every page — login,
+   register, and the profile page. Old rules kept for history per standing
+   rule:
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   margin: 0;
@@ -19,13 +23,19 @@ body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-.auth-page form {
+.home-page {
+  max-width: 480px;
+}
+
+.auth-page form,
+.home-page form {
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
 
-.auth-page label {
+.auth-page label,
+.home-page label {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
@@ -33,11 +43,14 @@ body {
   color: #333;
 }
 
-.auth-page input {
+.auth-page input,
+.home-page input,
+.home-page textarea {
   padding: 0.5rem;
   border: 1px solid #ccc;
   border-radius: 4px;
   font-size: 1rem;
+  font-family: inherit;
 }
 
 .auth-page button,
@@ -51,9 +64,58 @@ body {
   cursor: pointer;
 }
 
-.auth-page button:disabled {
+.auth-page button:disabled,
+.home-page button:disabled {
   background: #999;
   cursor: not-allowed;
+}
+
+.images-section {
+  margin-top: 1.5rem;
+  border-top: 1px solid #eee;
+  padding-top: 1rem;
+}
+
+.image-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.image-gallery img {
+  width: 90px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+}
+
+.upload-label {
+  display: inline-block;
+  padding: 0.6rem 1rem;
+  border-radius: 4px;
+  background: #111;
+  color: white;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+*/
+
+:root {
+  --tinder-pink: #fd267a;
+  --tinder-orange: #ff6036;
+  --tinder-gradient: linear-gradient(45deg, var(--tinder-pink), var(--tinder-orange));
+  --text-dark: #424242;
+  --text-muted: #9b9b9b;
+  --border-light: #eceaea;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  margin: 0;
+  background: #fff9fa;
+  color: var(--text-dark);
 }
 
 .error {
@@ -62,6 +124,275 @@ body {
 }
 
 .hint {
-  color: #777;
+  color: var(--text-muted);
   font-size: 0.85rem;
+}
+
+.auth-page,
+.home-page {
+  max-width: 360px;
+  margin: 4rem auto;
+  padding: 2rem;
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(253, 38, 122, 0.12);
+}
+
+/* Wider than the auth forms — form and photo panel now sit side by side
+   (see .profile-layout) rather than stacked, so this needs real width. */
+.home-page {
+  max-width: 820px;
+}
+
+.profile-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.25rem;
+}
+
+/* --- Login/register brand block (illustration + app name + tagline) ---- */
+
+.brand {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.brand-illustration {
+  width: 140px;
+  height: auto;
+  margin-bottom: 0.25rem;
+}
+
+/* Higher specificity than ".auth-page h1" (which still supplies the
+   gradient-text treatment) so these overrides actually win — a bare
+   ".app-name" class alone wouldn't beat ".auth-page h1"'s specificity. */
+.auth-page .app-name {
+  font-size: 2rem;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.25rem;
+}
+
+.tagline {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  margin: 0 0 1.5rem;
+}
+
+/* "Log in"/"Register" is now a secondary heading — the brand block above is
+   the primary visual moment, not this. */
+.auth-page h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-dark);
+  margin: 0 0 1rem;
+}
+
+/* h1 already has margin-bottom for the stacked layout elsewhere — reset it
+   here since .page-header's own margin now does that job. */
+.page-header h1 {
+  margin-bottom: 0;
+}
+
+/* A secondary action, not the primary CTA — deliberately not the big
+   gradient button style, so it doesn't visually compete with Create
+   profile/Save changes for attention. */
+.logout-button {
+  background: none;
+  box-shadow: none;
+  color: var(--text-muted);
+  border: 1px solid var(--border-light);
+  padding: 0.4rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 999px;
+  width: auto;
+}
+
+/* Narrow viewports: side-by-side stops making sense, stack instead. */
+@media (max-width: 700px) {
+  .profile-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.auth-page h1,
+.home-page h1 {
+  font-size: 1.6rem;
+  font-weight: 800;
+  margin-bottom: 1.25rem;
+  background: var(--tinder-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.auth-page form,
+.home-page form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.auth-page label,
+.home-page label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.auth-page input,
+.home-page input,
+.home-page select,
+.home-page textarea {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  font-size: 1rem;
+  font-family: inherit;
+  color: var(--text-dark);
+  background: #fafafa;
+}
+
+.auth-page input:focus,
+.home-page input:focus,
+.home-page select:focus,
+.home-page textarea:focus {
+  outline: none;
+  border-color: var(--tinder-pink);
+  background: white;
+}
+
+.char-count {
+  align-self: flex-end;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: none;
+  font-weight: 400;
+}
+
+.auth-page button,
+.home-page button {
+  padding: 0.75rem;
+  border: none;
+  border-radius: 999px;
+  background: var(--tinder-gradient);
+  color: white;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(253, 38, 122, 0.35);
+}
+
+.auth-page button:disabled,
+.home-page button:disabled {
+  background: #d8d8d8;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.link-button {
+  background: none !important;
+  border: none;
+  color: var(--tinder-pink);
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 !important;
+  text-decoration: underline;
+  box-shadow: none !important;
+  font-size: inherit;
+}
+
+/* 2026-08-13: this used to be a section stacked below the form, styled as a
+   simple border-top separator. Now sits adjacent to the form as its own
+   panel (see .profile-layout) and stays visible in a locked state before
+   the profile exists (see .locked below), instead of only appearing once
+   mode() is 'edit'. */
+.images-section {
+  padding: 1.25rem;
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  transition: box-shadow 0.3s ease, opacity 0.3s ease;
+}
+
+/* Not yet unlocked — profile isn't complete. Dimmed and non-interactive
+   rather than hidden entirely, so it's clear this is coming next, not
+   absent — this is the "enabled once profile is complete" behavior. */
+.images-section.locked {
+  opacity: 0.55;
+  pointer-events: none;
+  background: #fafafa;
+}
+
+.locked-message {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin: 0.5rem 0 0;
+}
+
+/* The moment the panel unlocks, right after first creating a profile — see
+   justCreated in home.ts. */
+.images-section.highlight {
+  box-shadow: 0 0 0 3px var(--tinder-pink);
+}
+
+.step-hint {
+  margin: 0 0 0.5rem;
+  font-weight: 700;
+  color: var(--tinder-pink);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.images-section h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+}
+
+.image-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.75rem 0;
+}
+
+.image-gallery img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* The real <input type="file"> is visually hidden (see home.html) — this
+   label stands in as the clickable control. Scoped as .home-page
+   .upload-label (not just .upload-label) so its specificity beats the
+   generic ".home-page label" rule above — without that, being a <label>
+   itself meant it was inheriting that rule's muted color/uppercase/flex
+   layout instead of its own styling. */
+.home-page .upload-label {
+  display: inline-block;
+  padding: 0.65rem 1.2rem;
+  border-radius: 999px;
+  background: var(--tinder-gradient);
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(253, 38, 122, 0.35);
 }
