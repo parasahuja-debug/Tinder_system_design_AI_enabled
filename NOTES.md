@@ -26,21 +26,66 @@
     > ng new is Angular's scaffolding generator. It created the folder structure and ran npm install, which is where the bulk of the "lots of folders" came from. 
 
 - create - proxy.conf.json (URLs for profile page and /auth)
+    Forwards /auth and /profile from :4200 → gateway :8080 so the browser never sees a cross-origin request (no CORS needed)
 - create angular.json - point angular.json's serve target at that proxy file, so ng serve picks it up automatically.
     Post this edit- ng serve (i.e. npm start) will now route /auth/* and /profile/* calls to the gateway.
-- create app/app.config.ts
-- create app/auth.service.ts (called through app.config.ts)
+    ng serve doesn't know the proxy file exists unless told — serve.options.proxyConfig wires it in
+- edit app/app.config.ts - 
+- create app/auth.service.ts (called through app.config.ts) - localStorage is only ever touched in auth.service.ts — nowhere else. AuthService is the hub, everything else points at it.
+
 - create app/auth.interceptor.ts
 - create app/auth.guard.ts
 - create app/login/login.ts
-- create app/login/login.html
+- create app/login/login.html - Email/password form → AuthService.login() → navigate home
 - create app/register/register.ts
-- create app/register/register.html
+- create app/register/register.html - Same shape, calls /auth/register (also logs you in, per the backend)
 - create app/home/home.ts
-- create app/home/home.html
+- create app/home/home.html - The guarded landing page — calls GET /profile on load to prove the whole auth chain works from a real browser, not just curl
 - now mapping - create app/app.routes.ts (login/register/home)
 - create - app.html.generated-placeholder - preserve ng new generated
 - edit app.html basis our requirement
 - edit app.ts 
-- edit styles.css - global styling file
+- edit styles.css - global styling file - Minimal shared styling so the forms/buttons aren't unstyled 
+
+                    ┌─────────────────────────┐
+                    │   AuthService            │
+                    │  (owns the JWT)           │
+                    └───────────┬─────────────┘
+        writes token ↑          │ reads token ↓
+   ┌──────────┬──────────┐      ├───────────┬────────────┐
+   │ login.ts │register.ts│     │interceptor│  guard.ts   │
+   └──────────┴──────────┘      └───────────┴────────────┘
+                                        │            │
+                              attaches header   blocks route
+                                        ▼            ▼
+                                gateway :8080   Router → /login
+
+
+> Initiate - 
+    Frontend dev server
+    cd frontend
+    npm start                     # = `ng serve`, picks up proxy.conf.json automatically
+    Open- http://localhost:4200
+
+## Quick notes
+
+[2026-08-12 23:20] i wanted to learn Day1 procedure from Day1 setup session
+[2026-08-12 23:20] i wanted to understand the decisioning around database , why index are there and why each table exists and why we key pk.
+
+-----
+
+# Day2 Execution
+- Edit profile service (main.py)
+    Profile schema addition for day3 plan (gender/lat/long)
+    Id column is index and pk for 1-1 relationship with auth service user table
+    Profile request schema update (user id doesnt validated, it comes in request)
+    **Profile: ProfileRequest is what the client sends; Profile is what's stored.**
+    X-User-Id pull funtion to pull from request. Fail if not exists.
+    Replacing /create-profile with the real POST /profile route. (adding small validations- profile exists and new fields). ID comes in request now, not random created.
+    Get profile changed - 
+        Day 1 version just echoed X-User-Id back to prove the gateway wiring worked — it never touched the database. Now it does a real Profile lookup for that user, returning all the fields, or a 404 if they haven't created a profile yet.
+    Adding /Put profile - if there is a need to update the profile.
+
+- 
+
 
