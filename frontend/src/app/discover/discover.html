@@ -1,0 +1,78 @@
+<div class="discover-page">
+  <app-brand-mark variant="compact"></app-brand-mark>
+
+  <div class="page-header">
+    <h1>Discover</h1>
+    <nav class="header-icons">
+      <a routerLink="/matches" class="icon-button" aria-label="Matches" title="Matches">♥</a>
+      <button type="button" class="icon-button" (click)="logout()" aria-label="Log out" title="Log out">⎋</button>
+    </nav>
+  </div>
+
+  <!-- Deliberately OUTSIDE the mode-based branching below, not nested
+       inside the 'ready' branch — a match can happen on the very last
+       candidate in the queue, which flips mode to 'empty' (current()
+       becomes null) in the same update that sets matchName(). Nesting this
+       inside the "has a current candidate" branch made the banner vanish
+       in that exact case, before it was ever seen. Sits above whatever
+       state is showing underneath; dismissing it just clears the banner,
+       it doesn't affect the deck. -->
+  @if (matchName()) {
+    <div class="match-banner">
+      <p>It's a match with {{ matchName() }}!</p>
+      <button type="button" class="link-button" (click)="dismissMatch()">Keep swiping</button>
+    </div>
+  }
+
+  @if (mode() === 'loading') {
+    <p>Finding people nearby…</p>
+  } @else if (mode() === 'error') {
+    <p class="error">Could not load candidates — please try again.</p>
+  } @else if (mode() === 'empty') {
+    <div class="empty-state">
+      <p class="hint">No more profiles nearby right now.</p>
+      <button type="button" (click)="refresh()">Check again</button>
+    </div>
+  } @else if (current(); as candidate) {
+    <div class="swipe-card">
+      <div class="card-photo">
+        @if (currentImages().length > 0) {
+          <img [src]="currentImages()[0].objectUrl" [alt]="candidate.name + '\'s photo'" />
+        } @else {
+          <div class="photo-placeholder">No photo yet</div>
+        }
+      </div>
+
+      <div class="card-info">
+        <h2>{{ candidate.name }}, {{ candidate.age }}</h2>
+        <p class="card-city">{{ candidate.city }}</p>
+        <p class="card-bio">{{ candidate.bio }}</p>
+      </div>
+
+      @if (errorMessage()) {
+        <p class="error">{{ errorMessage() }}</p>
+      }
+
+      <div class="swipe-actions">
+        <button
+          type="button"
+          class="pass-button"
+          [disabled]="swiping()"
+          (click)="swipeAction('pass')"
+          aria-label="Pass"
+        >
+          ← Pass
+        </button>
+        <button
+          type="button"
+          class="like-button"
+          [disabled]="swiping()"
+          (click)="swipeAction('like')"
+          aria-label="Like"
+        >
+          Like →
+        </button>
+      </div>
+    </div>
+  }
+</div>

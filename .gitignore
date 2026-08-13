@@ -33,8 +33,12 @@ frontend/.angular/
 # .claude/skills/, then explicitly un-ignore the ones we keep.
 /.agents/
 /.claude/skills/*
-# Our own hand-written skill stays tracked.
+# Our own hand-written skills stay tracked.
 !/.claude/skills/fastapi-endpoint/
+!/.claude/skills/run-tinder/
+# ...except its own installed deps (Playwright, for the driver script) —
+# same reasoning as frontend/node_modules/ below: never commit node_modules.
+/.claude/skills/run-tinder/node_modules/
 # ADOPTION: to ship a mattpocock skill later, materialize it into a real tracked
 # dir (copy .agents/skills/<name>/ -> .claude/skills/<name>/, replacing the
 # symlink) and add a negation here, e.g.:

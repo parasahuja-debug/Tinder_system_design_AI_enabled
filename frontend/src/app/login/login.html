@@ -1,28 +1,7 @@
 <div class="auth-page">
-  <div class="brand">
-    <!-- Original inline illustration — two abstract figures + a shared
-         spark/heart, one gradient (no per-figure color-coding on purpose). -->
-    <svg class="brand-illustration" viewBox="0 0 300 160" role="img" aria-label="Two people meeting">
-      <defs>
-        <linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stop-color="#fd267a" />
-          <stop offset="100%" stop-color="#ff6036" />
-        </linearGradient>
-      </defs>
-      <circle cx="75" cy="48" r="20" fill="url(#brandGrad)" />
-      <path d="M40 150 Q40 95 75 88 Q110 95 110 150 Z" fill="url(#brandGrad)" />
-      <circle cx="225" cy="48" r="20" fill="url(#brandGrad)" />
-      <path d="M190 150 Q190 95 225 88 Q260 95 260 150 Z" fill="url(#brandGrad)" />
-      <path
-        d="M150 70 C150 58 136 52 129 61 C122 70 129 84 150 100 C171 84 178 70 171 61 C164 52 150 58 150 70 Z"
-        fill="url(#brandGrad)"
-      />
-    </svg>
-    <h1 class="app-name">Mutual</h1>
-    <p class="tagline">Where the feeling's Mutual.</p>
-  </div>
+  <app-brand-mark variant="full" tagline="Where the feeling's Mutual."></app-brand-mark>
 
-  <h2>Log in</h2>
+  <h1 class="sr-only">Log in</h1>
 
   <form [formGroup]="form" (ngSubmit)="submit()">
     <label>

@@ -1,6 +1,13 @@
 <div class="home-page">
+  <app-brand-mark variant="compact"></app-brand-mark>
+
+  <!-- 2026-08-13: removed — "Your profile" heading text; the compact
+       brand-mark right above already carries the page's visual context, so
+       this was as redundant as login/register's already-hidden <h1>. Kept
+       for history per standing rule:
+  <h1>Your profile</h1>
+  -->
   <div class="page-header">
-    <h1>Your profile</h1>
     <button class="logout-button" (click)="logout()">Log out</button>
   </div>
 
@@ -91,9 +98,13 @@
       </button>
     </form>
 
+    <!-- 2026-08-13: removed — "Photos" <h2>; same reasoning as the "Your
+         profile" h1 above, the panel's own content (upload control/gallery)
+         already makes its purpose obvious without a redundant label. Kept
+         for history per standing rule:
+    <h2>Photos</h2>
+    -->
     <div class="images-section" [class.locked]="mode() === 'create'" [class.highlight]="justCreated()">
-      <h2>Photos</h2>
-
       @if (mode() === 'create') {
         <p class="locked-message">Complete your profile to unlock photo uploads.</p>
       } @else {
@@ -122,6 +133,28 @@
           />
         </label>
       }
+
+      <!-- Inside the photos box itself (not below the whole two-column
+           layout) — always rendered, even while .images-section is still
+           .locked, so the tooltip on the disabled state is discoverable
+           rather than the button just not existing yet. .locked's own
+           opacity/pointer-events already dims+disables it during 'create'
+           mode; [disabled] below additionally covers 'edit' mode with zero
+           photos, so both missing pieces are captured by one tooltip.
+           Unlocks for real (see canDiscover in home.ts) once the profile
+           exists AND at least one photo is uploaded. -->
+      <div class="next-step">
+        <p class="cheeky-hint">Add a photo to discover who is Mutual nearby.</p>
+        <button
+          type="button"
+          class="next-button"
+          [disabled]="!canDiscover()"
+          [title]="canDiscover() ? 'See who is nearby' : 'Complete the profile and upload photos'"
+          (click)="goToDiscover()"
+        >
+          Next: Discover people →
+        </button>
+      </div>
     </div>
     </div>
   }

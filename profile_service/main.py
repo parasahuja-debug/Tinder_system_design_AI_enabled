@@ -174,6 +174,38 @@ def get_profile(x_user_id: str = Header(default=None)):
         db.close()
 
 
+@app.get("/profile/{user_id}")
+def get_profile_by_id(user_id: str, x_user_id: str = Header(default=None)):
+    """Fetch another user's profile — used once two users are matched, so
+    each side can see who they matched with. Requires being authenticated
+    (X-User-Id present) but not ownership, unlike GET /profile above — same
+    policy shift image_service already made for viewing (not editing)
+    another user's photos.
+
+    Deliberately omits lat/long, unlike the owner's own GET /profile above:
+    exact coordinates are more sensitive than a match needs — city is
+    enough context, precise location isn't something even a mutual match
+    should see.
+    """
+    get_user_id(x_user_id)  # still requires a logged-in caller
+    db = SessionLocal()
+    try:
+        profile = db.query(Profile).filter(Profile.id == user_id).first()
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        return {
+            "user_id": profile.id,
+            "name": profile.name,
+            "age": profile.age,
+            "gender": profile.gender,
+            "state": profile.state,
+            "city": profile.city,
+            "bio": profile.bio,
+        }
+    finally:
+        db.close()
+
+
 @app.put("/profile")
 def update_profile(profile: ProfileRequest, x_user_id: str = Header(default=None)):
     """Edit the authenticated user's existing profile (full replace of the editable fields)."""

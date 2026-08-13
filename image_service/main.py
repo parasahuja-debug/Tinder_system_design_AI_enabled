@@ -200,32 +200,63 @@ def list_images(x_user_id: str = Header(default=None)):
         db.close()
 
 
+@app.get("/images/user/{user_id}")
+def list_images_for_user(user_id: str, x_user_id: str = Header(default=None)):
+    """List another user's images — used once two users are matched, so
+    each side can render the other's photos on the Matches page. Requires
+    being authenticated (X-User-Id present) but not ownership, same policy
+    shift as GET /images/{image_id} below (view any, edit/upload only your
+    own). Two path segments after /images ("user" + the id) mean this never
+    collides with GET /images/{image_id} below regardless of declaration
+    order — that route only ever matches exactly one segment.
+    """
+    get_user_id(x_user_id)
+    db = SessionLocal()
+    try:
+        images = db.query(Image).filter(Image.profile_id == user_id).all()
+        return [
+            {"image_id": img.id, "url": img.url, "original_filename": img.original_filename}
+            for img in images
+        ]
+    finally:
+        db.close()
+
+
 @app.get("/images/{image_id}")
 def get_image_file(image_id: str, x_user_id: str = Header(default=None)):
-    """Serve the raw bytes of one image, owned by the caller. This is what a
-    browser's <img src="/images/<id>"> tag actually hits to render a
+    """Serve the raw bytes of one image, to any authenticated caller. This is
+    what a browser's <img src="/images/<id>"> tag actually hits to render a
     thumbnail — GET /images only ever returns metadata (ids + urls), never
     the pixel data itself.
 
-    Always checks the DB for a matching row (id + ownership) before touching
-    disk — never just "does a file exist at this path". This closes two
-    things at once: orphan files from a failed upload (piece 5) can never be
-    served (no DB row to match), and a user can't fetch another user's image
-    by guessing a UUID (the row must also belong to them). One generic 404
-    for both "doesn't exist" and "not yours" — same info-leak principle as
-    auth_service's login route.
+    Always checks the DB for a matching row before touching disk — never
+    just "does a file exist at this path". That still closes the orphan-file
+    case (a failed upload leaves a file with no DB row, so it can never be
+    served) even though ownership is no longer checked here.
     """
-    user_id = get_user_id(x_user_id)
+    get_user_id(x_user_id)  # still requires a logged-in caller; just no longer requires ownership
     db = SessionLocal()
     try:
-        image = (
-            db.query(Image)
-            .filter(Image.id == image_id, Image.profile_id == user_id)
-            .first()
-        )
+        # 2026-08-13: replaced — this used to also filter on
+        # `Image.profile_id == user_id`, so only the uploader could ever view
+        # their own photo. That was right for the profile-edit page (Day 2's
+        # only caller), but Day 3's Discover feed needs any logged-in user to
+        # view a candidate's photos, not just their own. GET /images (list)
+        # is unchanged and still owner-scoped — this is deliberately the one
+        # place a photo becomes visible beyond its owner, once a profile is
+        # live. Old query kept for history per standing rule:
+        # image = (
+        #     db.query(Image)
+        #     .filter(Image.id == image_id, Image.profile_id == user_id)
+        #     .first()
+        # )
+        image = db.query(Image).filter(Image.id == image_id).first()
         if not image:
             raise HTTPException(status_code=404, detail="Image not found")
-        file_path = os.path.join(IMAGE_STORE_DIR, user_id, f"{image.id}{image.extension}")
+        # Path is built from the image's actual owner (image.profile_id), not
+        # the caller — the file lives under the owner's folder on disk
+        # regardless of who's viewing it now.
+        file_path = os.path.join(IMAGE_STORE_DIR, image.profile_id, f"{image.id}{image.extension}")
         return FileResponse(file_path)
     finally:
         db.close()

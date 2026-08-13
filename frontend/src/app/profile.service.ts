@@ -22,6 +22,12 @@ export interface Profile {
 // X-User-Id header, never from client-supplied data.
 export type ProfileRequest = Omit<Profile, 'user_id'>;
 
+// Shape returned by GET /profile/{user_id} — deliberately missing lat/long
+// compared to Profile above (see profile_service/main.py's
+// get_profile_by_id: exact coordinates are more sensitive than a match
+// needs to see).
+export type PublicProfile = Omit<Profile, 'lat' | 'long'>;
+
 interface ProfileWriteResponse {
   message: string;
   user_id: string;
@@ -62,6 +68,18 @@ export class ProfileService {
   // fetched separately via getImageBlob.
   listImages(): Observable<ImageMeta[]> {
     return this.http.get<ImageMeta[]>('/images');
+  }
+
+  // Another user's profile — used on the Matches page, so each side can see
+  // who they matched with. 404s if that user somehow has no profile.
+  getProfileById(userId: string): Observable<PublicProfile> {
+    return this.http.get<PublicProfile>(`/profile/${userId}`);
+  }
+
+  // Another user's image metadata — same Matches-page use case as
+  // getProfileById above.
+  listImagesForUser(userId: string): Observable<ImageMeta[]> {
+    return this.http.get<ImageMeta[]>(`/images/user/${userId}`);
   }
 
   // FormData, not JSON: image_service's /images route expects

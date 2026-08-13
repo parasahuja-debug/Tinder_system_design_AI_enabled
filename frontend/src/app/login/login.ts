@@ -3,6 +3,7 @@ import { ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 
 import { AuthService } from '../auth.service';
+import { BrandMark } from '../brand-mark/brand-mark';
 
 // Login page. Purpose: collect email/password, exchange them for a JWT via
 // AuthService, and land the user on the protected home page. Errors from the
@@ -11,7 +12,7 @@ import { AuthService } from '../auth.service';
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [ReactiveFormsModule, RouterLink],
+  imports: [ReactiveFormsModule, RouterLink, BrandMark],
   templateUrl: './login.html'
 })
 export class Login {

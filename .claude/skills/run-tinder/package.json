@@ -1,0 +1,9 @@
+{
+  "name": "run-tinder-driver",
+  "private": true,
+  "type": "module",
+  "description": "Playwright driver for the run-tinder skill — not part of the shipped app.",
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}

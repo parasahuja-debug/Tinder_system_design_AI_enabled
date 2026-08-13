@@ -203,6 +203,19 @@ Each backend service keeps its own lean `CLAUDE.md`.
   it stays as an inline preview panel adjacent to the profile form (the
   side-by-side locked/unlocked pattern already built Day 2), just carried
   over into the new `Profile` component. `authGuard` applies to both routes.
+- **Brand rollout, deferred from Day 2 (2026-08-13):** login got the full
+  "Mutual" branding treatment (`app-brand-mark` component — original inline
+  SVG illustration, gradient wordmark, tagline; `frontend/src/app/
+  brand-mark/`). Not yet carried to `register` (full variant, its own
+  tagline — "Start something Mutual." was the draft) or `Home`/`Profile`
+  (compact variant — small icon + wordmark, no tagline, since it's a
+  functional page not a landing page). Do this for real on Day 3, and apply
+  it to whatever new pages Day 3 adds (Discover/swipe deck, Matches list) —
+  compact variant for those too, same reasoning as Home. Also carry over the
+  `.sr-only` pattern used on login's `<h1>`: when the brand block already
+  supplies the page's visual context, the literal page-name heading
+  ("Register", etc.) can be visually hidden but kept for accessibility,
+  rather than shown as a second redundant bold heading.
 - `recommendation_service/main.py`: bounding-box + age/gender candidate
   feed, excludes already-swiped profiles. Comments explain the tradeoff vs.
   a real sharded approach.

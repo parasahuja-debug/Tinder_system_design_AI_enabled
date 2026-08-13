@@ -65,6 +65,32 @@ services:
       # verify "file on disk matches DB row" from outside the container.
       - ./image_store:/app/image_store
 
+  # Swipe decisions + match detection. Trusts the gateway's X-User-Id header,
+  # same as profile-service/image-service. Owns the swipes/matches tables.
+  matcher-service:
+    build: ./matcher_service
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8004"
+
+  # Candidate-feed queries for Discover. Read-only: reads profiles/swipes/
+  # images directly from the shared DB (see recommendation_service/main.py's
+  # module docstring) rather than calling those services over HTTP, so it
+  # only needs the DB itself, not the other services, to be up.
+  recommendation-service:
+    build: ./recommendation_service
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8005"
+
   # nginx: the only thing clients talk to. Routes + gates protected routes via
   # auth_request. Config is mounted (not baked) so edits don't need a rebuild.
   gateway:
@@ -78,6 +104,8 @@ services:
       - auth-service
       - profile-service
       - image-service
+      - matcher-service
+      - recommendation-service
 
   # Dev-only browser UI for the DB (the "Studio-like" page). It speaks HTTP to
   # you on 8081 and the Postgres wire protocol to `db` internally — which is why

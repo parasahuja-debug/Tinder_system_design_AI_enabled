@@ -3,6 +3,7 @@ import { ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 
 import { AuthService } from '../auth.service';
+import { BrandMark } from '../brand-mark/brand-mark';
 
 // Register page. Purpose: create an account. auth_service's /auth/register
 // also returns a token on success (see auth_service/main.py — "log the user
@@ -11,7 +12,7 @@ import { AuthService } from '../auth.service';
 @Component({
   selector: 'app-register',
   standalone: true,
-  imports: [ReactiveFormsModule, RouterLink],
+  imports: [ReactiveFormsModule, RouterLink, BrandMark],
   templateUrl: './register.html'
 })
 export class Register {

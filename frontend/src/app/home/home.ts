@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, inject, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, computed } from '@angular/core';
 import { ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms';
 // 2026-08-13: no longer used directly — calls now go through ProfileService
 // instead, same as AuthService already does for auth calls. Kept for
@@ -9,6 +9,7 @@ import { Router } from '@angular/router';
 import { AuthService } from '../auth.service';
 import { ProfileService, ProfileRequest, ImageMeta } from '../profile.service';
 import { INDIA_STATES, INDIA_STATES_AND_CITIES } from '../india-locations';
+import { BrandMark } from '../brand-mark/brand-mark';
 
 // 2026-08-13: replaced — this was the Day 1 stub's response shape (just
 // user_id + a message echoing it back). The real Profile type now lives in
@@ -36,7 +37,7 @@ interface DisplayImage {
 @Component({
   selector: 'app-home',
   standalone: true,
-  imports: [ReactiveFormsModule],
+  imports: [ReactiveFormsModule, BrandMark],
   templateUrl: './home.html'
 })
 export class Home implements OnInit, OnDestroy {
@@ -175,6 +176,16 @@ export class Home implements OnInit, OnDestroy {
   }
 
   readonly justCreated = signal(false);
+
+  // The "Next: Discover" step only unlocks once there's a profile AND at
+  // least one photo — showing up with zero photos to swipe on is a worse
+  // first impression than not being able to browse yet, so this gate exists
+  // deliberately, not just as a loading-state check.
+  readonly canDiscover = computed(() => this.mode() === 'edit' && this.images().length > 0);
+
+  goToDiscover(): void {
+    this.router.navigateByUrl('/discover');
+  }
 
   submit(): void {
     if (this.form.invalid) return;

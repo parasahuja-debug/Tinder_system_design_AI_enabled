@@ -13,6 +13,16 @@ export const routes: Routes = [
     canActivate: [authGuard]
   },
   {
+    path: 'discover',
+    loadComponent: () => import('./discover/discover').then((m) => m.Discover),
+    canActivate: [authGuard]
+  },
+  {
+    path: 'matches',
+    loadComponent: () => import('./matches/matches').then((m) => m.Matches),
+    canActivate: [authGuard]
+  },
+  {
     path: 'login',
     loadComponent: () => import('./login/login').then((m) => m.Login)
   },

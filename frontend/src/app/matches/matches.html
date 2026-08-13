@@ -1,0 +1,41 @@
+<div class="matches-page">
+  <app-brand-mark variant="compact"></app-brand-mark>
+
+  <div class="page-header">
+    <h1>Matches</h1>
+    <nav class="header-icons">
+      <a routerLink="/discover" class="icon-button" aria-label="Discover" title="Back to Discover">←</a>
+      <button type="button" class="icon-button" (click)="logout()" aria-label="Log out" title="Log out">⎋</button>
+    </nav>
+  </div>
+
+  @if (mode() === 'loading') {
+    <p>Loading matches…</p>
+  } @else if (mode() === 'error') {
+    <p class="error">Could not load matches — please try again.</p>
+  } @else if (mode() === 'empty') {
+    <p class="hint">No matches yet — head to Discover and swipe on someone!</p>
+  } @else {
+    <ul class="match-list">
+      @for (m of matches(); track m.match_id) {
+        <li class="match-row">
+          <div class="match-photo">
+            @if (m.photoUrl) {
+              <img [src]="m.photoUrl" alt="" />
+            } @else {
+              <div class="photo-placeholder small"></div>
+            }
+          </div>
+          <div class="match-info">
+            @if (m.name) {
+              <span class="match-name">{{ m.name }}, {{ m.age }}</span>
+              <span class="match-city">{{ m.city }}</span>
+            } @else {
+              <span class="match-name loading">Loading…</span>
+            }
+          </div>
+        </li>
+      }
+    </ul>
+  }
+</div>

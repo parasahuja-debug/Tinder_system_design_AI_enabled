@@ -103,6 +103,7 @@
     /get images - all images information
         this is what the Angular profile view will call to render existing thumbnails, and what makes the "reload confirms persistence" verification step possible later.
     /get imageid - get image one at a time for rendering, browser would ask it.
+        stops checking "do you own this photo" — it just checks "are you logged in at all" (which it already gets for free, since only the gateway can reach it and only after auth).
 
 - Adding entry in Docker-compose.yml
 - Update nginx/default conf - to add image service
@@ -115,6 +116,54 @@
     - India-locations.ts - all state and city names of india to render on form, home.ts to refer
 
 
-    
+----
+
+# Day3 Execution
+- create matcher_service/main.py
+    - Schema or matcher and swipe
+    - swipe request and userid fetch from header
+    - add swiperid,targetid and direction of swipe in table
+    - post swipe - swipe table entry if new, and check for match if other person has also swiped
+    - get matches - 
+        filters for rows where the caller is either user_a_id or user_b_id (per the alphabetical-ordering note from piece 1), then for each row returns whichever id isn't the caller — that's "the other person in the match."
+- requirements.txt file for matcher service
+- Docker file
+
+- create recommendation service 
+    - recommendation_service reads the images table directly from the shared Postgres — just the image ids, not the actual photo files. It includes those ids in each candidate it returns.
+    - get user id
+    - bounding function if 2kn is selected, it is 2 km in rectangular area.
+    - /discover get method - use profiles table to get the user, and then get image from image table for the users,
+- requirements.txt for recommendation service
+- Docker file
+
+- update dockercompose.yml file with both the service
+- nginx config update -
+    nginx routes. Two new paths need registering — /discover → recommendation-service:8005, and /swipe + /matches → matcher-service:8004 (two separate location blocks pointing at the same upstream, since matcher owns two distinct paths). All three are protected routes, so each gets the full three-line pattern (auth_request, auth_request_set, X-User-Id forward) copied from /profile.
+
+- Front end -
+    - Add brandmark on register.html and register.ts
+    - Home.html,home.ts also gets a smaller one
+
+- Make run tinder skill to run the frontend 
+    - a driver.mjs (headless-Chromium REPL via Playwright) plus SKILL.md documenting it — so future sessions can launch the Angular dev server and actually click through/screenshot the app instead of trusting code-reading alone; used it just now to confirm the brand-mark changes render correctly on /register (full) and / (compact), fixing three real bugs in the driver along the way (async command ordering, premature stdin-close killing in-flight commands, and a substring bug in URL-waiting) — all now documented in the skill's Gotchas section for next time.
+
+- create - discovery.service.ts
+    mirrors profile.service.ts's pattern (routes + shapes live in one service, pages never call HttpClient directly). Three methods: discover() → GET /discover, swipe() → POST /swipe, listMatches() → GET /matches.
+
+- building discover.ts in three small pieces, same rhythm as matcher_service. Piece A: imports, state signals, and ngOnInit 
+- discover.html - page
+- adding the clasess used in styles.css
+
+- updating app.routes.ts in frontend/src/app
+
+- updating home.html in same
+- updating home.ts - guided discover button
+- two services in profile and image (get method added to each service for docker)
+- frontend/src/app/matches - for discover matches 
+    app.routes.ts add 
+    global css
+    rest files in matches folder
+
 
 
