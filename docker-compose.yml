@@ -91,6 +91,39 @@ services:
     expose:
       - "8005"
 
+  # Presence registry: tracks which users have a live chat WebSocket open
+  # right now. In-memory only, no DB — see session_service/main.py's module
+  # docstring for why this is its own service instead of living inside
+  # direct-msg. Not in gateway's routes: only direct-msg ever calls it,
+  # service-to-service.
+  session-service:
+    build: ./session_service
+    expose:
+      - "8006"
+
+  # WebSocket chat between two matched users + persisted message history.
+  # Calls auth-service, matcher-service, and session-service directly over
+  # this network (see main.py's module docstring) rather than only reading
+  # the shared DB, which is why it needs depends_on all three, not just db.
+  direct-msg:
+    build: ./direct_msg
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
+      AUTH_SERVICE_URL: http://auth-service:8002
+      MATCHER_SERVICE_URL: http://matcher-service:8004
+      SESSION_SERVICE_URL: http://session-service:8006
+    depends_on:
+      db:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      matcher-service:
+        condition: service_started
+      session-service:
+        condition: service_started
+    expose:
+      - "8007"
+
   # nginx: the only thing clients talk to. Routes + gates protected routes via
   # auth_request. Config is mounted (not baked) so edits don't need a rebuild.
   gateway:
@@ -106,6 +139,7 @@ services:
       - image-service
       - matcher-service
       - recommendation-service
+      - direct-msg
 
   # Dev-only browser UI for the DB (the "Studio-like" page). It speaks HTTP to
   # you on 8081 and the Postgres wire protocol to `db` internally — which is why

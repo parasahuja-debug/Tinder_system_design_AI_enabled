@@ -63,6 +63,16 @@ MCP-based Postgres access (Day 5).
 - Downstream services **trust `X-User-Id`** and never re-verify the token — they
   aren't reachable except through the gateway, so only the gateway can set it.
 
+**The one exception:** `direct_msg`'s chat WebSocket (`/chat/ws/{match_id}`).
+`auth_request` doesn't compose with a WebSocket upgrade, and a browser can't
+attach an `Authorization` header to a WS handshake at all. So the JWT rides as
+the second entry of the WebSocket subprotocol list instead (`new
+WebSocket(url, ['bearer', token])` → the `Sec-WebSocket-Protocol` header,
+which nginx forwards through untouched), and `direct_msg` authenticates the
+connection itself with a plain HTTP call to `auth_service`'s existing
+`/validate` — still never learning `JWT_SECRET` itself. See
+`direct_msg/main.py`'s module docstring for the full reasoning.
+
 ## Services
 
 | Service | Port | Owns | Status |
@@ -73,16 +83,16 @@ MCP-based Postgres access (Day 5).
 | `image_service/` | 8003 | image upload to disk, own + by-id/by-user viewing | ✅ Day 2, extended Day 3 |
 | `matcher_service/` | 8004 | swipes, match detection | ✅ Day 3 |
 | `recommendation_service/` | 8005 | candidate feed (bounding-box + age/gender) | ✅ Day 3 |
-| `session_service/` | — | user→websocket map | ⏳ Day 4 |
-| `direct_msg/` | — | websocket chat + persistence | ⏳ Day 4 |
+| `session_service/` | 8006 | presence registry (user→online, in-memory) | ✅ Day 4 |
+| `direct_msg/` | 8007 | websocket chat + message persistence | ✅ Day 4 |
 | `support_chatbot_service/` | — | RAG + memory + live DB via MCP | ⏳ Day 5 |
 | `observability/` | — | Prometheus + Grafana | ⏳ Day 6 |
-| `frontend/` (Angular) | 4200 | one page per feature | ✅ Day 1–3 (auth, profile/images, discover/matches), more to come |
+| `frontend/` (Angular) | 4200 | one page per feature | ✅ Day 1–4 (auth, profile/images, discover/matches, chat), more to come |
 
 ## Running it
 
 ```bash
-docker compose up -d --build      # db, auth, profile, image, matcher, recommendation, gateway, pgweb
+docker compose up -d --build      # db, auth, profile, image, matcher, recommendation, session, direct-msg, gateway, pgweb
 docker compose ps                 # all should be Up (db healthy)
 ```
 
@@ -143,6 +153,29 @@ curl -XPOST http://localhost:8080/swipe -H "Authorization: Bearer $TOKEN" \
 # list your matches (just ids — the frontend enriches each with a
 # GET /profile/<id> + GET /images/user/<id> lookup to show name/photo)
 curl http://localhost:8080/matches -H "Authorization: Bearer $TOKEN"
+```
+
+### Try messaging (Day 4)
+```bash
+# two users, mutual like -> match (same flow as Day 3)
+TOKEN_A=... # register/login as above
+TOKEN_B=...
+curl -XPOST http://localhost:8080/swipe -H "Authorization: Bearer $TOKEN_A" \
+  -H 'content-type: application/json' -d '{"target_id":"<B-user-id>","direction":"like"}'
+curl -XPOST http://localhost:8080/swipe -H "Authorization: Bearer $TOKEN_B" \
+  -H 'content-type: application/json' -d '{"target_id":"<A-user-id>","direction":"like"}'
+MATCH_ID=$(curl -s http://localhost:8080/matches -H "Authorization: Bearer $TOKEN_A" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)[0]["match_id"])')
+
+# message history (plain HTTP, normal auth_request-protected route)
+curl http://localhost:8080/chat/history/$MATCH_ID -H "Authorization: Bearer $TOKEN_A"
+
+# the live chat itself needs a WebSocket-capable client — curl can't do this
+# part. wscat's -H flag doesn't set Sec-WebSocket-Protocol the way this
+# service expects; use its -s/--subprotocol flag (or a browser, which is what
+# the frontend actually does) to offer ['bearer', '<token>']:
+wscat -c ws://localhost:8080/chat/ws/$MATCH_ID -s "bearer,$TOKEN_A"
+# then type: {"body": "hello"}
 ```
 
 ### Inspecting the database

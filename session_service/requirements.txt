@@ -1,0 +1,5 @@
+# session_service runtime deps. No SQLAlchemy/psycopg2 here (unlike every
+# other service) because presence is intentionally in-memory only — see
+# main.py's module docstring for why persisting it isn't the point.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0

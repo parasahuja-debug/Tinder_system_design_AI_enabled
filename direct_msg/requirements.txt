@@ -1,0 +1,15 @@
+# direct_msg runtime deps. Same DB stack as most services, plus:
+# - httpx: this is the first service that calls other services over HTTP
+#   (auth-service /validate, matcher-service /matches/{id}, session-service
+#   /session/*) rather than only reading the shared DB, so it needs a client.
+#   Chosen over requests because it has native async support, matching this
+#   service's async WebSocket handler.
+# - websockets: uvicorn's actual WebSocket protocol implementation; the
+#   [standard] extra on other services' uvicorn pin already includes it, but
+#   it's called out explicitly here since this is the one service that
+#   depends on it for its core feature, not just incidentally.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+httpx==0.28.1

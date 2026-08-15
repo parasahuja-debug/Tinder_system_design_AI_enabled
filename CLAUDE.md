@@ -5,13 +5,18 @@ Backend: Python + FastAPI, one service per feature. Frontend: Angular.
 Single shared Postgres instance (one DB, one table set per service, not one
 DB per service). nginx (`gateway/`) is the only thing clients talk to.
 
-Current state as of this file: `gateway/` has nginx config that already
-assumes `auth-service:8002` and `profile-service:8001` exist — auth-service
-does not exist yet. `profile_service/main.py` is an unauthenticated
-FastAPI + SQLAlchemy skeleton with no `requirements.txt`/`Dockerfile` yet.
-`direct_msg/` is empty. Nothing else described below has been built. Do not
-assume any service is running or correct without actually starting it and
-hitting it.
+Current state as of this file (through Day 4): `auth_service`, `profile_service`,
+`image_service`, `matcher_service`, `recommendation_service`, `session_service`,
+and `direct_msg` all exist, build, and run via `docker compose up` — each with
+its own `Dockerfile`, `requirements.txt`, and lean `CLAUDE.md`.
+`gateway/conf.d/default.conf` routes and auth-gates all of them, including
+`direct_msg`'s chat WebSocket (the one route that authenticates itself instead
+of via nginx's `auth_request` — see that service's `CLAUDE.md`). `frontend/`
+has Login, Register, Home, Discover, Matches, and Chat pages behind
+`authGuard`. Not yet built: `support_chatbot_service/` (Day 5) and
+`observability/` (Day 6). Do not assume any service is running or correct
+without actually starting it and hitting it — this line describes what
+*exists*, not that it's currently up in your session.
 
 Full day-by-day build order and the reasoning behind every stack choice
 lives in `.claude/plans/humming-bubbling-valley.md` — read that before

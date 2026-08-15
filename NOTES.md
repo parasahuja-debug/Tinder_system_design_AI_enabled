@@ -165,5 +165,54 @@
     global css
     rest files in matches folder
 
+# Day4 Execution
+
+- session_service - 
+    post("/session/connect") - who came online (Called by direct_msg right after it accepts that
+    user's WebSocket connectionc)
+    post("/session/disconnect") - Called by direct_msg when that user's WebSocket closes (tab closed, network drop, etc.
+    get("/session/{user_id}") - to check if the user is online or not-
+        The lookup endpoint isn't called by direct_msg today — Day 4's chat only needs match verification and persistence, not "is the other person online right now"
+    get("/health") - healthcheck
+- Docker File
+- requirements.txt
+- Claude.md - purpose, endpoints, env, how to run standalone.
+
+- direct_msg - 
+    The core problem: nginx's auth_request (which every other protected route uses) doesn't compose with a WebSocket upgrade, and a browser can't set an Authorization header on a WS connection anyway. So this is the one place in the whole system where "only the gateway authenticates" has to bend.
+- get("/matches/{match_id}") - in main.py of matcher_service
+    Runs through the direct msg service - to confirm the matches before direct msging service to enable.
+- main.py for direct_msg service.
+    has its own authenticator - authenticates from auth service
+    has its own confirmation of matches through matcher service.
+    custom codes for websocket
+    then eventually websocket - those who do not know - 
+        it starts as a completely normal HTTP request — the browser asks the server "can we upgrade this connection to a WebSocket?" The server replies with a special HTTP status (101 Switching Protocols) if it agrees. After that one exchange, it stops being HTTP entirely — it becomes a raw, long-lived, two-way pipe 
+    GET /chat/history/{match_id} — the plain HTTP endpoint (gateway-protected via auth_request, like every other route) the Angular page calls on load to fetch prior messages before the WebSocket connects. 
+    healthcheck also.
+- Docker File 
+- requirements.txt
+- CLAUDE.md
+
+- append both services - dockercompose.yml
+- append - ateway/conf.d/default.conf
+    validation skip in websocket
+    for chat hostory it exists.
+
+**note - gateway does't get recreated since it depends only on a mounted config, not a rebuilt image — restarting it helps**
+
+- Front end -
+     src/app/chat.service.ts.- websocket connect and chat
+        getHistory (plain HTTP, interceptor handles auth) and connect (raw WebSocket with the subprotocol token trick).
+     src/app/chat/chat.ts - 
+        history loading, the WebSocket lifecycle (openSocket, onmessage, onclose branching on those real close codes), send(), and ngOnDestroy (so navigating away actually closes the socket, matching the per-page connection scope we agreed on).
+    src/app/chat/chat.html - 
+    styles.css - chat page styles
+    src/app/app.routes.ts - bounc the frontend
+    
+
+
+
+
 
 

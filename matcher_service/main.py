@@ -208,3 +208,39 @@ def list_matches(x_user_id: str = Header(default=None)):
         ]
     finally:
         db.close()
+
+
+@app.get("/matches/{match_id}")
+def get_match(match_id: str, user_id: str):
+    """Look up one match by id and confirm a given user is a participant.
+
+    Why this is different from every other endpoint in this file: it's not
+    reached through the gateway, so there's no X-User-Id header set by
+    auth_request — the only caller is direct_msg, calling this directly over
+    the compose-internal network right when a chat WebSocket connects, after
+    it has already resolved the caller's real user_id itself (see
+    direct_msg/main.py's module docstring for how). That's why user_id
+    arrives as a plain query param here instead of the trusted header every
+    gateway-facing route uses.
+
+    Why direct_msg needs this at all: without it, anyone who obtains a
+    match_id (it's just a UUID in a URL) could open a chat WebSocket into a
+    conversation they were never part of. This is the one-time check, at
+    connection time only, that the caller is actually one of the two people
+    this match belongs to — not re-checked per message, since matches don't
+    get revoked mid-conversation in this build.
+    """
+    db = SessionLocal()
+    try:
+        match = db.query(Match).filter(Match.id == match_id).first()
+        if not match:
+            raise HTTPException(status_code=404, detail="No such match")
+        if user_id not in (match.user_a_id, match.user_b_id):
+            # Deliberately the same 403 regardless of *why* — either match_id
+            # is real but belongs to two other people, or it's a typo'd id.
+            # direct_msg only needs "can this caller use this chat thread?",
+            # not a diagnosis of which case it is.
+            raise HTTPException(status_code=403, detail="Not a participant in this match")
+        return {"match_id": match.id, "user_a_id": match.user_a_id, "user_b_id": match.user_b_id}
+    finally:
+        db.close()

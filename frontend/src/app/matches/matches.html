@@ -18,7 +18,7 @@
   } @else {
     <ul class="match-list">
       @for (m of matches(); track m.match_id) {
-        <li class="match-row">
+        <li class="match-row" [routerLink]="['/chat', m.match_id]">
           <div class="match-photo">
             @if (m.photoUrl) {
               <img [src]="m.photoUrl" alt="" />

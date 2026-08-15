@@ -23,6 +23,11 @@ export const routes: Routes = [
     canActivate: [authGuard]
   },
   {
+    path: 'chat/:matchId',
+    loadComponent: () => import('./chat/chat').then((m) => m.Chat),
+    canActivate: [authGuard]
+  },
+  {
     path: 'login',
     loadComponent: () => import('./login/login').then((m) => m.Login)
   },

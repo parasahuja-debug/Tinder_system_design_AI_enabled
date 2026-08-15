@@ -1,0 +1,43 @@
+<div class="chat-page">
+  <app-brand-mark variant="compact"></app-brand-mark>
+
+  <div class="page-header">
+    <h1>{{ otherUserName() ?? 'Chat' }}</h1>
+    <nav class="header-icons">
+      <a routerLink="/matches" class="icon-button" aria-label="Matches" title="Back to Matches">←</a>
+      <button type="button" class="icon-button" (click)="logout()" aria-label="Log out" title="Log out">⎋</button>
+    </nav>
+  </div>
+
+  @if (mode() === 'loading') {
+    <p>Loading conversation…</p>
+  } @else if (mode() === 'error') {
+    <p class="error">Could not open this conversation — please try again from Matches.</p>
+  } @else {
+    @if (connectionError()) {
+      <p class="error">{{ connectionError() }}</p>
+    }
+
+    <ul class="message-list">
+      @for (message of messages(); track message.id) {
+        <!-- Alignment is the only thing that distinguishes "mine" from
+             "theirs" — comparing sender_id to myUserId() rather than trusting
+             any client-side flag, since sender_id came from direct_msg's own
+             server-resolved identity, never from the browser that sent it. -->
+        <li class="message-row" [class.mine]="message.sender_id === myUserId()">
+          <span class="message-body">{{ message.body }}</span>
+        </li>
+      }
+    </ul>
+
+    <form class="message-form" [formGroup]="draft" (ngSubmit)="send()">
+      <input
+        type="text"
+        formControlName="body"
+        placeholder="Type a message…"
+        autocomplete="off"
+      />
+      <button type="submit" [disabled]="draft.invalid">Send</button>
+    </form>
+  }
+</div>
