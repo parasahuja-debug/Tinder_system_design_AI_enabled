@@ -190,6 +190,7 @@
         it starts as a completely normal HTTP request — the browser asks the server "can we upgrade this connection to a WebSocket?" The server replies with a special HTTP status (101 Switching Protocols) if it agrees. After that one exchange, it stops being HTTP entirely — it becomes a raw, long-lived, two-way pipe 
     GET /chat/history/{match_id} — the plain HTTP endpoint (gateway-protected via auth_request, like every other route) the Angular page calls on load to fetch prior messages before the WebSocket connects. 
     healthcheck also.
+    direct_msg/main.py first — it's the one existing service using async/WebSocket patterns, and the MCP client's lifecycle (opened once at startup, kept alive)
 - Docker File 
 - requirements.txt
 - CLAUDE.md
@@ -209,6 +210,45 @@
     src/app/chat/chat.html - 
     styles.css - chat page styles
     src/app/app.routes.ts - bounc the frontend
+
+# Day5 Execution
+
+- Support_chatbot_service - 
+    - Docker File - for the service independency.
+    - Requirements.txt - for the individual dependency.
+    - main.py - Entry point then other things are plitted across files now
+        Readme.md chunking, use of fastembed instead of sentencetransformers
+        - docchunk(README) and chatbotmessage stored.
+        - two tables - chatbot_messages,doc_chunks one for each.
+        - MCP client - This is the first place in the codebase needing genuine async startup (spawning and keeping open a subprocess), so it introduces @app.on_event("startup"/"shutdown") — nothing else here has needed that yet, since every other service's setup is synchronous module-level code.
+        <everything else in this file (the two named tools, and later the WS endpoint tool-call loop) depends on _mcp_session already being open — so the session itself has to exist before anything can call it.>
+        - _run_readonly_query is the single function that actually talks to _mcp_session — every tool call funnels through here so there's exactly one code path to audit, not one per tool.
+        - get_match_count and get_profile_summary.they're the only live-data the plan calls for — companion mode grounding a supportive reply in a real match count, and enough profile info (name/age/city, deliberately not bio/lat/long) to personalize a reply without exposing more than the app itself already shows a user about their own profile.
+    - mem0 init — configuring it to use the local Ollama model (both as LLM and embedder) and our existing pgvector as its store, so it's a separate concern from the README-RAG embeddings but doesn't add a new datastore
+
+    Around mem0 - 
+        - memory.add(transcript, user_id=...) (when a session ends): mem0 calls the configured LLM (our Ollama model) to extract a short summary from the transcript, calls the configured embedder (Ollama's nomic-embed-text) to vectorize that summary, and writes both the text and the vector as a row in its own Postgres table (via the pgvector extension — the same extension doc_chunks uses, just a different table).
+        - memory.get_all(user_id=...) (when a session opens): reads back every stored row for that user — a plain metadata filter by user_id, no vector math needed, since we just want "this user's recent memories," not a semantic search. We then filter that list to the last 7 days ourselves and delete anything older.
+    
+    - the two helper functions the WS endpoint will call — save_session_memory (on disconnect) and load_recent_memories (on connect, with the lazy 7-day pruning).
+    - connection handshake. This mirrors direct_msg's pattern almost exactly (same reason: auth_request can't gate a WebSocket, and a browser can't set Authorization on one either) — token rides as the Sec-WebSocket-Protocol subprotocol, resolved via a plain HTTP call to auth-service's existing /validate. The one thing new here: after auth succeeds, the client's first JSON message must declare {"mode": "faq" | "companion"} before anything else happens.
+    - chat client, system prompts, tool schemas.
+
+    A few notes before writing:
+
+    Using AsyncOpenAI (not the sync client) since everything else in this endpoint will be async/await (the MCP calls, the WebSocket itself) — using the sync client here would block the event loop.
+    - wrap_openai from LangSmith wraps the client instance itself, so every call through it gets traced automatically — no per-call tracing code needed.
+    - Tool schemas take no parameters — consistent with decision #5: the model only ever picks which tool to call, user_id always comes from the connection's trusted identity, never from the model.
+
+- docker-compose.yml - append ollama and the supportchatbotservice
+- gateway/conf.d/default.conf — a new self-authenticated /support/ws location, same shape as the existing /chat/ws block (no auth_request, since a WS upgrade can't compose with it; just the Upgrade/Connection headers forwarded).
+
+- Frontend - 
+    - first support-chat.service.ts. Let me check the existing chat.service.ts and auth.service.ts to mirror the established WS + auth patterns exactly.
+    - src/app/support-widget/support-widget.ts
+    - src/app/support-widget/support-widget.html
+    - styles.css
+    - mounting the widget in the app shell. This means **app.ts** needs to gate on login state for the first time (previously it had "no app-level state on purpose").
     
 
 

@@ -9,3 +9,5 @@
 [2026-08-13 21:04] to make user add images later.
 
 [2026-08-13 21:15] a user profile button for account setting displaying profile info and photo upload in discover.
+
+[2026-08-16 12:25] if someone has logged in and has completed the profile, he should only get to see the discover page directly post login. and an option on login for him to get to profile page. and if he has not fulfilled the requirements for the profile page, the next page to login page would be always profile page.

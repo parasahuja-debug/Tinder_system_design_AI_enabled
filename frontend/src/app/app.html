@@ -5,3 +5,7 @@
      HTML comment, since the placeholder itself contains comment-closing
      character sequences that would prematurely end a wrapping comment). -->
 <router-outlet />
+
+@if (auth.isLoggedIn()) {
+  <app-support-widget />
+}

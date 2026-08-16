@@ -16,6 +16,9 @@ image_store/
 .env
 *.local.env
 
+# Personal learning notes — not shipped documentation, stays local only.
+LEARNING.md
+
 # Editor / OS noise
 .DS_Store
 .idea/

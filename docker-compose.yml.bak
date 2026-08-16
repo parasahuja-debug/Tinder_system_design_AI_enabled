@@ -159,15 +159,6 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
       AUTH_SERVICE_URL: http://auth-service:8002
       OLLAMA_HOST: http://ollama:11434
-      # Model names come from .env, not hardcoded here — lets you retune
-      # which model does what (see support_chatbot_service/config.py) with
-      # just an .env edit + `docker compose up -d support-chatbot-service`,
-      # no code change or rebuild. Defaults (after the :-) match config.py's
-      # own Python-level fallbacks, kept in sync manually since compose has
-      # no way to read another file's defaults.
-      CHAT_MODEL: ${CHAT_MODEL:-llama3.2}
-      MEM0_LLM_MODEL: ${MEM0_LLM_MODEL:-mistral:7b-instruct-v0.3-q4_K_M}
-      MEM0_EMBED_MODEL: ${MEM0_EMBED_MODEL:-nomic-embed-text}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY}
       LANGSMITH_TRACING: ${LANGSMITH_TRACING}
       LANGSMITH_PROJECT: ${LANGSMITH_PROJECT}

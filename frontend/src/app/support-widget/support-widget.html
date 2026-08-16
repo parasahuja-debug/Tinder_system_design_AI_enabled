@@ -1,0 +1,61 @@
+<div class="support-widget">
+  <button
+    type="button"
+    class="support-widget-toggle"
+    (click)="toggle()"
+    [attr.aria-expanded]="isOpen()"
+    aria-label="Support chat"
+  >
+    {{ isOpen() ? '✕' : '💬' }}
+  </button>
+
+  @if (isOpen()) {
+    <div class="support-widget-panel">
+      <div class="support-widget-header">
+        <span>Support</span>
+      </div>
+
+      @if (mode() === 'faq') {
+        <p class="support-widget-note">
+          Personal, supportive chat unlocks once you're active on Discover, Matches, or Chat.
+        </p>
+      }
+
+      @if (connectionError()) {
+        <p class="error">{{ connectionError() }}</p>
+      }
+
+      <!-- track $index, not a message id: unlike ChatMessage (persisted,
+           server-assigned uuid), a DisplayMessage here has no stable id of
+           its own — this widget never re-fetches or reorders history, so
+           index-tracking is safe within one open panel's lifetime. -->
+      <ul class="message-list support-widget-messages">
+        @for (message of messages(); track $index) {
+          <li class="message-row" [class.mine]="message.role === 'user'">
+            <span class="message-body">{{ message.text }}</span>
+          </li>
+        }
+        @if (isWaiting()) {
+          <!-- Local-model replies genuinely take 10-40+ seconds, especially
+               in companion mode (two sequential model calls for the
+               tool-call round trip) — without this, a slow-but-working
+               reply looks identical to "stuck." -->
+          <li class="message-row">
+            <span class="message-body support-widget-thinking">Thinking…</span>
+          </li>
+        }
+      </ul>
+
+      <form class="message-form" [formGroup]="draft" (ngSubmit)="send()">
+        <input
+          type="text"
+          formControlName="text"
+          placeholder="Ask a question…"
+          autocomplete="off"
+          [disabled]="isWaiting()"
+        />
+        <button type="submit" [disabled]="draft.invalid || isWaiting()">Send</button>
+      </form>
+    </div>
+  }
+</div>

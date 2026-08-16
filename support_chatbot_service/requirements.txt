@@ -1,0 +1,20 @@
+# support_chatbot_service runtime deps. No `anthropic` here: this service's
+# chat + memory-summarization both run on a local Ollama model, not Claude
+# (see CLAUDE.md / the Day 5 plan) — Claude is reserved for the Day-6
+# bio-assist/icebreaker features and the eventual eval-judge, not this
+# high-frequency support chat.
+
+fastapi==0.115.6            # the service itself, same as every other service here
+uvicorn[standard]==0.34.0   # ASGI server; [standard] pulls in `websockets`, needed for /support/ws
+sqlalchemy==2.0.36          # ORM for this service's own tables (doc_chunks, chatbot_messages) — same pattern every service uses
+psycopg2-binary==2.9.10     # the Postgres driver SQLAlchemy needs at runtime
+pgvector==0.3.6              # gives SQLAlchemy a Vector column type, so doc_chunks.embedding maps to Postgres's `vector` type from the pgvector extension
+httpx==0.27.2                # resolves the WS token via a plain HTTP call to auth-service's /validate, same as direct_msg. Pinned <0.28 (not 0.28.1 like direct_msg's own requirements.txt) because the ollama package below requires httpx>=0.27,<0.28 — found via a real ResolutionImpossible on first build, not guessed up front
+
+fastembed==0.5.1            # embeds README.md chunks for RAG retrieval — ONNX-runtime based, no torch, so the container stays small (rejected sentence-transformers for this reason, see plan)
+
+openai==1.59.6              # NOT for OpenAI's API — this is the client SDK used to talk to Ollama's OpenAI-compatible endpoint, so we get standard tool-call schemas and LangSmith's wrap_openai for free
+ollama==0.4.5                # mem0's Ollama LLM/embedder provider needs this installed itself (talks to Ollama's native API directly, separate from the openai-SDK path chat.py uses) — without it mem0 tries to interactively prompt to install it, which just aborts in a container
+mem0ai==0.1.34              # long-term memory layer: summarizes a closed chat session and stores/retrieves it per user (7-day retention), backed by our own pgvector, not a new datastore
+langsmith==0.2.10           # traces every model call (wrap_openai here; wrap_anthropic is used by the separate Day-6 Claude features, not this service)
+mcp==1.1.3                  # stdio client SDK — lets this service spawn and call the project's Postgres MCP server (same package .mcp.json uses for Claude Code) for the two guarded live-data tools

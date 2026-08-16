@@ -275,9 +275,15 @@ Each backend service keeps its own lean `CLAUDE.md`.
   confirm all traces (including the MCP tool call) show up in LangSmith.
 - **End of day**: pause for a short separate discussion to scope the
   precision/recall eval (golden Q&A set construction, scoring approach) —
-  planned, not built, today.
+  planned, not built, today. Noted for when it is built: the judge model is
+  Claude, not the local Ollama model this service runs on — an eval judge is
+  infrequent/offline and quality-critical, a genuine fit for Claude unlike
+  the high-frequency support chat itself. That judge call gets its own
+  LangSmith trace via `wrap_anthropic`, distinct from this service's
+  `wrap_openai` trace of the Ollama model — two providers, both traced,
+  never conflated.
 
-### Day 6 — Observability: Prometheus + Grafana
+### Day 6 — Observability: Prometheus + Grafana, plus two Claude-backed extras
 - Instrument every service with `prometheus_client` `/metrics`: request
   counts/latency, login counts, chat message counts, swipe/match counts.
 - `observability/prometheus.yml` scrapes all services; `observability/
@@ -291,6 +297,23 @@ Each backend service keeps its own lean `CLAUDE.md`.
 - README: add Observability section (what's tracked, how to view it).
 - **Verification**: generate logins/chats, confirm the numbers move in
   Grafana within one scrape interval.
+- **Two Claude-backed features, added the same day as Observability rather
+  than a day of their own** (decided 2026-08-16, alongside Day 5's chatbot
+  work — both share the same "low-frequency, quality-over-cost favors
+  Claude" reasoning as Day 5's eval-judge note above, unlike the
+  high-frequency Ollama-served support chat):
+  - **Bio-writing assist** on the Profile page: user drafts a bio, Claude
+    suggests a rewrite. One-shot, infrequent (only on edit), quality-
+    sensitive — genuinely benefits from Claude over the local model.
+  - **Icebreaker suggestions** on Matches/Chat, shown after a new match:
+    Claude drafts a few conversation-starters from both profiles' bios.
+  - Both get their own LangSmith trace via `wrap_anthropic`.
+  - Both get their own mem0 integration, **independent of** the Day-5
+    chatbot's mem0 instance — a separate memory namespace/config, since
+    "past bio drafts" or "a match's prior icebreaker context" isn't the
+    same concern as the support chatbot's conversation memory, and keeping
+    them independent avoids one feature's memory bleeding into another's
+    retrieval.
 
 ### Day 7 — Integration, hardening, docs/tooling finish
 - Full `docker compose up` walkthrough of the entire journey: register →

@@ -85,14 +85,14 @@ connection itself with a plain HTTP call to `auth_service`'s existing
 | `recommendation_service/` | 8005 | candidate feed (bounding-box + age/gender) | ✅ Day 3 |
 | `session_service/` | 8006 | presence registry (user→online, in-memory) | ✅ Day 4 |
 | `direct_msg/` | 8007 | websocket chat + message persistence | ✅ Day 4 |
-| `support_chatbot_service/` | — | RAG + memory + live DB via MCP | ⏳ Day 5 |
+| `support_chatbot_service/` | 8008 | RAG + memory + live DB via MCP | ✅ Day 5 |
 | `observability/` | — | Prometheus + Grafana | ⏳ Day 6 |
 | `frontend/` (Angular) | 4200 | one page per feature | ✅ Day 1–4 (auth, profile/images, discover/matches, chat), more to come |
 
 ## Running it
 
 ```bash
-docker compose up -d --build      # db, auth, profile, image, matcher, recommendation, session, direct-msg, gateway, pgweb
+docker compose up -d --build      # db, auth, profile, image, matcher, recommendation, session, direct-msg, ollama, support-chatbot-service, gateway, pgweb
 docker compose ps                 # all should be Up (db healthy)
 ```
 
@@ -178,6 +178,45 @@ wscat -c ws://localhost:8080/chat/ws/$MATCH_ID -s "bearer,$TOKEN_A"
 # then type: {"body": "hello"}
 ```
 
+### Try the support chatbot (Day 5)
+The `ollama` service bind-mounts your host's own `~/.ollama` directory (see
+`docker-compose.yml`), so if you already have these three models pulled
+locally, there's nothing to do — the container sees them immediately, no
+download. Two different models for two different jobs, not one for both
+(see `support_chatbot_service/CLAUDE.md`'s Env section for why). If you
+don't have them yet, one-time setup after the first `docker compose up`:
+```bash
+docker compose exec ollama ollama pull llama3.2
+docker compose exec ollama ollama pull mistral:7b-instruct-v0.3-q4_K_M
+docker compose exec ollama ollama pull nomic-embed-text
+```
+
+Same WS auth trick as `/chat/ws` (the JWT rides as the
+`Sec-WebSocket-Protocol` subprotocol) — but the **first message** after
+connecting must declare a mode, since support_chatbot_service has no
+history endpoint to call first:
+```bash
+# faq mode — app-info only, grounded in README.md, no live-data tools
+wscat -c ws://localhost:8080/support/ws -s "bearer,$TOKEN"
+# then: {"mode": "faq"}
+# then: {"message": "what is this app?"}
+# try a live-data question here too — it should decline rather than guess:
+# {"message": "how many matches do I have?"}
+
+# companion mode — same as faq, plus supportive framing and two live-data
+# tools (get_match_count, get_profile_summary)
+wscat -c ws://localhost:8080/support/ws -s "bearer,$TOKEN"
+# then: {"mode": "companion"}
+# then: {"message": "how many matches do I have?"}
+```
+Closing the connection ends that session — reopening starts fresh, with no
+raw transcript replayed. A summarized version persists via mem0 for 7 days
+and gets folded into the next session's context, so a returning user gets
+continuity of "how things have been going" without the bot ever quoting a
+prior conversation back verbatim. See `support_chatbot_service/CLAUDE.md`
+for the full architecture (both modes, the two-layer memory, the
+MCP-guarded live-data tools, why Ollama instead of Claude here).
+
 ### Inspecting the database
 - **Browser (Studio-like):** pgweb at `http://localhost:8081` (auto-connected to
   the `tinder` DB).
@@ -188,7 +227,21 @@ wscat -c ws://localhost:8080/chat/ws/$MATCH_ID -s "bearer,$TOKEN_A"
 One shared Postgres (`pgvector/pgvector:pg16` image, chosen up front because the
 Day-5 chatbot stores embeddings via the `pgvector` extension). Each service owns
 its own tables in the single `tinder` database and creates them on startup — no
-migration tool this build week (Alembic is backlog).
+migration tool this build week (Alembic is backlog). `support_chatbot_service`
+owns `doc_chunks`/`chatbot_messages` directly (SQLAlchemy, same as every other
+service) and, additionally, mem0's own internal tables — created and managed by
+the `mem0` library itself via its `pgvector` vector-store adapter, never
+modeled by us — same single Postgres instance, just a library-owned table set
+instead of a hand-rolled one.
+
+## Local model
+`support_chatbot_service` runs on local models (Ollama: `llama3.2` for
+chat/tool-calling, `mistral:7b-instruct` for mem0's own memory-extraction
+step, `nomic-embed-text` for mem0's embeddings) rather than the Claude API —
+a high-frequency, low-stakes workload like a support/FAQ chat doesn't need
+to spend Claude tokens. LangSmith still traces every chat call
+(`wrap_openai`, since Ollama exposes an OpenAI-compatible endpoint) — going
+local swaps which client gets wrapped, not whether tracing happens at all.
 
 ## Repo conventions
 See `CLAUDE.md` (repo-wide) and each service's own `CLAUDE.md`. Dev tooling lives
