@@ -249,6 +249,13 @@
     - src/app/support-widget/support-widget.html
     - styles.css
     - mounting the widget in the app shell. This means **app.ts** needs to gate on login state for the first time (previously it had "no app-level state on purpose").
+
+----
+## Key Facts
+mem0 fetching - 
+    - there's no user_id column at all. mem0's create_col (line ~68 above) only ever defines three columns: id UUID,vector, payload JSONB. user_id isn't schema — it's just a key inside payload, same as data/memory/created_at.
+    - Filtering happens in list() (used by get_all, which is what load_recent_memories calls): for each filters key/value passed in — here just {"user_id": "..."} — it builds payload->>%s = %s and runs
+        - SELECT id, vector, payload FROM mem0 WHERE payload->>'user_id' = '<the-uuid>' LIMIT 100
     
 
 

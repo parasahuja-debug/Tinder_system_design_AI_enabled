@@ -315,11 +315,88 @@ Each backend service keeps its own lean `CLAUDE.md`.
     them independent avoids one feature's memory bleeding into another's
     retrieval.
 
-### Day 7 — Integration, hardening, docs/tooling finish
+### Day 7 — Chatbot Evaluation & Feedback (LangSmith)
+- **Golden Q&A dataset**: a hand-written set of (question, expected-answer
+  criteria) pairs covering both widget modes — README-grounded questions,
+  live-data questions that must hit an MCP tool (e.g. match count), and a
+  few adversarial ones (asking the bot to take an account action it has no
+  capability for, per its guardrail). Loaded into a LangSmith Dataset via
+  the SDK from a committed script (not hand-entered in the UI), so it's
+  reproducible — this is the item Day 5's end-of-day note deferred and the
+  old Day 7 backlog line called out.
+- **LLM-as-judge evaluator**: Claude scores each traced answer against the
+  dataset's expected criteria (grounded/not fabricated, refuses
+  out-of-scope actions, used tool data when the question required it) —
+  same reasoning as Day 5's eval-judge note: infrequent, quality-critical,
+  a genuine fit for Claude over the local Ollama model that serves the
+  actual chat. Judge call wrapped with `wrap_anthropic`, its own distinct
+  LangSmith trace, never conflated with the chatbot's `wrap_openai` trace.
+- **Regression/CI**: a `langsmith` `@unit`-style pytest suite that runs the
+  golden set against the live service and fails if judged accuracy drops
+  below a threshold — wired into `support_chatbot_service`'s slice of
+  `/test`, so a future change (e.g. retuning `CHAT_MODEL`) gets checked
+  before it's assumed safe, not discovered later by hand.
+- **Feedback capture**: thumbs up/down on each bot reply in the Angular
+  chat widget, POSTed to a new `support_chatbot_service` endpoint that
+  attaches the feedback to that reply's LangSmith run id
+  (`client.create_feedback`) — ties what a real user thought back to the
+  same run the offline judge already scored.
+- **Human review**: a LangSmith annotation queue, populated by an
+  automation rule that routes any trace with a 👎 or a judge score under
+  threshold to it — so review happens on the flagged subset, not only on
+  aggregate pass/fail numbers.
+- README: extend the Support Chatbot section with an "Evaluation"
+  subsection (what the golden set covers, how to run it, where feedback
+  shows up).
+- **Verification**: run the eval suite once, confirm a pass/fail per case
+  shows up in LangSmith; submit one 👎 through the widget and confirm the
+  corresponding trace lands in the annotation queue.
+
+### Day 8 — Image Content Verification (self-hosted HF classifier)
+- **New `moderation_service`**: loads a small Hugging Face image-
+  classification model (e.g. `Falconsai/nsfw_image_detection`, ViT-based,
+  ~86M params) once at container startup via `transformers`. Exposes one
+  endpoint (`POST /check`) that takes image bytes and returns a verdict
+  (allowed/flagged + confidence). A single-pass classifier, not an LLM
+  generating tokens — CPU inference is fast, unlike Day 5's finding about
+  this machine's CPU-only Ollama struggling with a 3B generative model, so
+  the same constraint doesn't apply here.
+- Own `Dockerfile` + `requirements.txt` (`transformers`, `torch`, a thin
+  FastAPI wrapper) — isolates the one heavy ML dependency in this repo to
+  exactly one service, same reasoning already used twice elsewhere: `ollama`
+  is split out from `support_chatbot_service`, and `session-service` is
+  split out of `direct-msg` (see docker-compose.yml's comment on each).
+  Keeps `image_service` itself untouched — still just FastAPI + SQLAlchemy
+  + disk I/O, no ML dependency added to a service whose job is file
+  storage.
+- `image_service`: after the existing extension/cap/size checks in
+  `upload_image` and before the file write to disk (the "reject before any
+  disk I/O" ordering already documented in `image_service/main.py`'s
+  docstring), call `moderation_service` synchronously; reject with 400, no
+  disk write, no DB row, if flagged.
+- Add `moderation-service` to `docker-compose.yml`: `expose` only (no
+  `ports`), unreachable from the host or gateway, same sealed pattern as
+  `session-service` — nothing outside this compose network ever calls it
+  directly.
+- No LangSmith trace for this call: it's a classifier, not an LLM, so
+  there's no prompt/response worth wrapping — a plain log line in
+  `moderation_service` (verdict + confidence per request) is enough, same
+  pattern as `chat.py`'s own tool-call logger.
+- Angular: a clear rejection message on the upload page if a photo is
+  flagged, not a silent failure.
+- README: a line in the Image Service section noting the moderation check,
+  what it catches, and why it's a separate service.
+- **Verification**: upload a normal profile photo (succeeds); upload an
+  allowed-extension file with obviously flagged content and confirm it's
+  rejected with a clear message; confirm `moderation_service`'s logs show a
+  verdict for both cases.
+
+### Day 9 — Integration, hardening, docs/tooling finish
 - Full `docker compose up` walkthrough of the entire journey: register →
-  profile → images → discover → swipe → match → chat → ask the support bot
-  a question — including checking Grafana reflects the activity and
-  LangSmith shows the chatbot traces.
+  profile → images (including one flagged-upload rejection) → discover →
+  swipe → match → chat → ask the support bot a question — including
+  checking Grafana reflects the activity, LangSmith shows the chatbot +
+  eval traces, and Day 7's eval suite still passes.
 - Apply the rate-limit/caching snippets already parked in
   `gateway/conf.d/confcanbethere.txt` (e.g. rate-limit swipe/discover, short
   cache on the discovery feed).
@@ -331,13 +408,16 @@ Each backend service keeps its own lean `CLAUDE.md`.
 - Finalize `README.md`: architecture overview, setup/run instructions, every
   service described, how to use the chatbot, how to read the dashboards —
   entirely first-principles reasoning, no external attribution.
-- Write a **Day 8+ backlog**: real sharded/Cassandra recommendation engine,
-  MinIO/S3 for images, JWT refresh + hardening, per-service databases, the
-  chatbot precision/recall eval (golden set + scoring, scoped on Day 5),
+- Write a **Day 10+ backlog**: real sharded/Cassandra recommendation engine,
+  MinIO/S3 for images, JWT refresh + hardening, per-service databases,
   <!-- 2026-08-09: removed from backlog — "live-DB tool access for the chatbot
        via the MCP server" is now Day-5 core scope, not backlog. Old text kept:
   live-DB tool access for the chatbot via the MCP server,
   -->
+  <!-- 2026-08-17: removed from backlog — "chatbot precision/recall eval
+       (golden set + scoring)" is now Day-7 core scope, not backlog. Old text
+       kept: chatbot precision/recall eval (golden set + scoring, scoped on
+       Day 5), -->
   automated test
   suite expansion, cloud deployment.
 
