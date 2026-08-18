@@ -26,10 +26,12 @@ Redis geo), so a discovery query only ever touches the region the requester
 is actually in, instead of range-scanning one global table.
 """
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from sqlalchemy import bindparam, create_engine, text
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 import math
 import os
+import time
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 engine = create_engine(DATABASE_URL)
@@ -43,6 +45,40 @@ DEFAULT_RADIUS_KM = 50.0
 DEFAULT_CANDIDATE_LIMIT = 20
 
 app = FastAPI()
+
+# --- Observability (Day 6): generic request metrics, same pattern as every
+# other service in this repo (see auth_service/main.py for the full walk-
+# through of why each piece is here) ------------------------------------
+REQUEST_COUNT = Counter(
+    "http_requests_total",
+    "Total HTTP requests received by this service",
+    ["method", "path", "status"],
+)
+REQUEST_LATENCY = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "path"],
+)
+
+
+@app.middleware("http")
+async def track_requests(request: Request, call_next):
+    """Times every request and records it under the generic HTTP metrics."""
+    start = time.perf_counter()
+    response = await call_next(request)
+    REQUEST_LATENCY.labels(request.method, request.url.path).observe(
+        time.perf_counter() - start
+    )
+    REQUEST_COUNT.labels(request.method, request.url.path, response.status_code).inc()
+    return response
+
+
+@app.get("/metrics")
+def metrics():
+    """Serializes the in-memory counters/histograms for Prometheus to scrape.
+    No auth: only the Prometheus container (internal compose network) calls this.
+    """
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 def get_user_id(x_user_id: str = Header(default=None)) -> str:

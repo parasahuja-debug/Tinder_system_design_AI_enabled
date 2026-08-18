@@ -30,11 +30,47 @@ handle a dropped Wi-Fi connection.
 """
 
 import datetime
+import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from pydantic import BaseModel
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 app = FastAPI(title="session_service")
+
+# --- Observability (Day 6): generic request metrics, same pattern as every
+# other service in this repo (see auth_service/main.py for the full walk-
+# through of why each piece is here) ------------------------------------
+REQUEST_COUNT = Counter(
+    "http_requests_total",
+    "Total HTTP requests received by this service",
+    ["method", "path", "status"],
+)
+REQUEST_LATENCY = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "path"],
+)
+
+
+@app.middleware("http")
+async def track_requests(request: Request, call_next):
+    """Times every request and records it under the generic HTTP metrics."""
+    start = time.perf_counter()
+    response = await call_next(request)
+    REQUEST_LATENCY.labels(request.method, request.url.path).observe(
+        time.perf_counter() - start
+    )
+    REQUEST_COUNT.labels(request.method, request.url.path, response.status_code).inc()
+    return response
+
+
+@app.get("/metrics")
+def metrics():
+    """Serializes the in-memory counters/histograms for Prometheus to scrape.
+    No auth: only the Prometheus container (internal compose network) calls this.
+    """
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 # user_id -> ISO timestamp of when the current connection was registered.
 # A dict, not a set, so /session/{user_id} can report *when* someone came

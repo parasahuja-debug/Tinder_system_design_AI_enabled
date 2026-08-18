@@ -10,12 +10,14 @@ only after auth_service's /validate succeeds, because only the gateway can
 reach this service directly (see CLAUDE.md's auth model).
 """
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, String, Integer, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 import os
+import time
 # 2026-08-12: unused now that POST /profile (below) keys rows off X-User-Id
 # instead of a generated uuid — see the commented-out old /create-profile route.
 # import uuid
@@ -59,6 +61,40 @@ class Profile(Base):
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+
+# --- Observability (Day 6): generic request metrics, same pattern as every
+# other service in this repo (see auth_service/main.py for the full walk-
+# through of why each piece is here) ------------------------------------
+REQUEST_COUNT = Counter(
+    "http_requests_total",
+    "Total HTTP requests received by this service",
+    ["method", "path", "status"],
+)
+REQUEST_LATENCY = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "path"],
+)
+
+
+@app.middleware("http")
+async def track_requests(request: Request, call_next):
+    """Times every request and records it under the generic HTTP metrics."""
+    start = time.perf_counter()
+    response = await call_next(request)
+    REQUEST_LATENCY.labels(request.method, request.url.path).observe(
+        time.perf_counter() - start
+    )
+    REQUEST_COUNT.labels(request.method, request.url.path, response.status_code).inc()
+    return response
+
+
+@app.get("/metrics")
+def metrics():
+    """Serializes the in-memory counters/histograms for Prometheus to scrape.
+    No auth: only the Prometheus container (internal compose network) calls this.
+    """
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 class ProfileRequest(BaseModel):
     # No `id`/`user_id` field here on purpose — per the auth model, identity

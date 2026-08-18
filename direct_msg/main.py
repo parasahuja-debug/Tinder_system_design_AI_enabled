@@ -25,13 +25,15 @@ once, at connection time, not per message.
 """
 
 import os
+import time
 import uuid
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from sqlalchemy import Column, DateTime, String, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.sql import func
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 WS_AUTH_FAILED = 4401  # custom close code (4000-4999 range is reserved for app use): bad/missing token
 WS_FORBIDDEN = 4403  # custom close code: token is valid but caller isn't in this match
@@ -94,6 +96,50 @@ class Message(Base):
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="direct_msg")
+
+# --- Observability (Day 6): generic request metrics, same pattern as every
+# other service in this repo (see auth_service/main.py for the full walk-
+# through of why each piece is here). Note: this only ever sees /chat/
+# history, /health, and /metrics — the WebSocket route below never goes
+# through HTTP middleware, so it can't appear in these two. -----------------
+REQUEST_COUNT = Counter(
+    "http_requests_total",
+    "Total HTTP requests received by this service",
+    ["method", "path", "status"],
+)
+REQUEST_LATENCY = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "path"],
+)
+
+
+@app.middleware("http")
+async def track_requests(request: Request, call_next):
+    """Times every request and records it under the generic HTTP metrics."""
+    start = time.perf_counter()
+    response = await call_next(request)
+    REQUEST_LATENCY.labels(request.method, request.url.path).observe(
+        time.perf_counter() - start
+    )
+    REQUEST_COUNT.labels(request.method, request.url.path, response.status_code).inc()
+    return response
+
+
+@app.get("/metrics")
+def metrics():
+    """Serializes the in-memory counters/histograms for Prometheus to scrape.
+    No auth: only the Prometheus container (internal compose network) calls this.
+    """
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+# Business metric, not a generic HTTP one: the plan asks for chat message
+# counts specifically. Since messages flow entirely through the WebSocket
+# route (which bypasses HTTP middleware, see above), this has no generic
+# fallback to ride along on — it's incremented by hand inside the message
+# loop below, right after a message is actually persisted.
+CHAT_MESSAGE_COUNT = Counter("chat_messages_total", "Total chat messages persisted")
 
 # user_id -> the live WebSocket this process is holding for them right now.
 # This is the actual socket registry — distinct from session_service's
@@ -228,6 +274,7 @@ async def chat(websocket: WebSocket, match_id: str):
                 db.refresh(message)  # pulls back the DB-assigned created_at so we can echo the real value
             finally:
                 db.close()
+            CHAT_MESSAGE_COUNT.inc()  # business metric: a message was actually persisted
 
             payload = {
                 "id": message.id,

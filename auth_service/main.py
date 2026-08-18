@@ -10,13 +10,15 @@ nginx captured from `/validate`, so trust flows outward from this one place.
 """
 
 import os
+import time
 import uuid
 import datetime
 
 import bcrypt
 import jwt
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from pydantic import BaseModel
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from sqlalchemy import Column, String, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -57,6 +59,52 @@ class User(Base):
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="auth_service")
+
+# --- Observability (Day 6): generic request metrics -------------------------
+# Counter/Histogram objects hold running totals in memory; nothing exposes
+# them to Prometheus yet (that's the /metrics endpoint, added next).
+REQUEST_COUNT = Counter(
+    "http_requests_total",
+    "Total HTTP requests received by this service",
+    ["method", "path", "status"],
+)
+REQUEST_LATENCY = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "path"],
+)
+# Business metric, not a generic HTTP one: Grafana needs "logins over time"
+# specifically, which no generic request counter can distinguish from any
+# other 200 — incremented by hand where a login actually succeeds, below.
+LOGIN_COUNT = Counter("auth_logins_total", "Total successful logins")
+
+
+@app.middleware("http")
+async def track_requests(request: Request, call_next):
+    """Times every request and records it under the generic HTTP metrics.
+
+    Why middleware and not per-route code: every current and future route in
+    this service gets measured automatically, without remembering to add
+    counter calls inside each new endpoint by hand.
+    """
+    start = time.perf_counter()
+    response = await call_next(request)
+    REQUEST_LATENCY.labels(request.method, request.url.path).observe(
+        time.perf_counter() - start
+    )
+    REQUEST_COUNT.labels(request.method, request.url.path, response.status_code).inc()
+    return response
+
+
+@app.get("/metrics")
+def metrics():
+    """Serializes the in-memory counters/histograms for Prometheus to scrape.
+
+    Why no auth here: only the Prometheus container (same internal compose
+    network as session-service and other internal-only services) ever calls
+    this — never nginx, never a client.
+    """
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 # --- Request/response shapes ------------------------------------------------
@@ -152,6 +200,7 @@ def login(creds: Credentials):
         user = db.query(User).filter(User.email == creds.email).first()
         if not user or not verify_password(creds.password, user.password_hash):
             raise HTTPException(status_code=401, detail="Invalid email or password")
+        LOGIN_COUNT.inc()  # business metric: a real login just happened
         return TokenResponse(access_token=issue_token(user.id, user.email))
     finally:
         db.close()

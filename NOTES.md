@@ -256,6 +256,24 @@ mem0 fetching -
     - there's no user_id column at all. mem0's create_col (line ~68 above) only ever defines three columns: id UUID,vector, payload JSONB. user_id isn't schema — it's just a key inside payload, same as data/memory/created_at.
     - Filtering happens in list() (used by get_all, which is what load_recent_memories calls): for each filters key/value passed in — here just {"user_id": "..."} — it builds payload->>%s = %s and runs
         - SELECT id, vector, payload FROM mem0 WHERE payload->>'user_id' = '<the-uuid>' LIMIT 100
+
+----
+# Day6 Execution
+
+- auth_service/main.py
+    middleware - tracks every request in the piece.
+    get metrics() - 
+        generate_latest() produces the bytes, and Response(generate_latest(), media_type=CONTENT_TYPE_LATEST) just wraps those bytes in an HTTP response with the content-type Prometheus's scraper expects (text/plain; version=0.0.4; charset=utf-8, which is what the CONTENT_TYPE_LATEST constant holds).
+    Login count(seperate)- above two were Request related.
+    update requirements.txt
+- profile-service, image-service, recommendation-service, session-service
+    the generic part (REQUEST_COUNT, REQUEST_LATENCY, the track_requests middleware, and the /metrics endpoint) is copy-paste identical across every service, same imports and same code. Nothing about it needs re-deriving per service.
+- matcher_service — this one also needs a business counter for swipe/match counts, the generic part first
+    SWIPE_COUNT is labeled by direction (like vs pass) so
+# Grafana can chart them separately; 
+    MATCH_COUNT has no labels since a match is a single kind of event.
+- direct_msg - 
+    which needs the chat-message business counter but there's a wrinkle worth flagging before I write it: the generic track_requests middleware only wraps regular HTTP requests, not WebSocket connections (@app.middleware("http") doesn't intercept the /chat/ws/{match_id} upgrade at all). So the generic metrics will only ever see /chat/history, /health, and /metrics — the WebSocket route itself never shows up in http_requests_total, which is expected and fine.
     
 
 

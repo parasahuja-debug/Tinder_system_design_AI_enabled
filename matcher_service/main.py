@@ -11,13 +11,15 @@ only after auth_service's /validate succeeds, same as every other protected
 service (see CLAUDE.md's auth model).
 """
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, String, DateTime, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 import os
+import time
 import uuid
 
 DATABASE_URL = os.environ["DATABASE_URL"]
@@ -81,6 +83,50 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
+# --- Observability (Day 6): generic request metrics, same pattern as every
+# other service in this repo (see auth_service/main.py for the full walk-
+# through of why each piece is here) ------------------------------------
+REQUEST_COUNT = Counter(
+    "http_requests_total",
+    "Total HTTP requests received by this service",
+    ["method", "path", "status"],
+)
+REQUEST_LATENCY = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "path"],
+)
+
+
+@app.middleware("http")
+async def track_requests(request: Request, call_next):
+    """Times every request and records it under the generic HTTP metrics."""
+    start = time.perf_counter()
+    response = await call_next(request)
+    REQUEST_LATENCY.labels(request.method, request.url.path).observe(
+        time.perf_counter() - start
+    )
+    REQUEST_COUNT.labels(request.method, request.url.path, response.status_code).inc()
+    return response
+
+
+@app.get("/metrics")
+def metrics():
+    """Serializes the in-memory counters/histograms for Prometheus to scrape.
+    No auth: only the Prometheus container (internal compose network) calls this.
+    """
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+# Business metrics, not generic HTTP ones: the plan asks for swipe/match
+# counts specifically. SWIPE_COUNT is labeled by direction (like vs pass) so
+# Grafana can chart them separately; MATCH_COUNT has no labels since a match
+# is a single kind of event. Both incremented by hand inside record_swipe,
+# right where each event actually happens — same reasoning as auth_service's
+# LOGIN_COUNT.
+SWIPE_COUNT = Counter("matcher_swipes_total", "Total swipes recorded", ["direction"])
+MATCH_COUNT = Counter("matcher_matches_total", "Total matches created")
+
 
 class SwipeRequest(BaseModel):
     # No swiper id field on purpose — per the auth model, identity always
@@ -129,6 +175,7 @@ def record_swipe(swipe: SwipeRequest, x_user_id: str = Header(default=None)):
             existing.direction = swipe.direction  # re-swipe: overwrite the prior decision (e.g. pass -> like)
         else:
             db.add(Swipe(swiper_id=user_id, target_id=swipe.target_id, direction=swipe.direction))
+        SWIPE_COUNT.labels(swipe.direction).inc()  # business metric: a swipe decision was recorded
 
         # Step 2 — only a "like" can ever create a match. A "pass" is fully
         # handled by step 1 above; nothing further to check.
@@ -164,6 +211,7 @@ def record_swipe(swipe: SwipeRequest, x_user_id: str = Header(default=None)):
                 if not already_matched:
                     db.add(Match(id=str(uuid.uuid4()), user_a_id=user_a_id, user_b_id=user_b_id))
                     matched = True
+                    MATCH_COUNT.inc()  # business metric: a new match was just created
 
         # Commits the swipe write and (if step 2b inserted one) the new
         # match row together, in one transaction — see the docstring above
