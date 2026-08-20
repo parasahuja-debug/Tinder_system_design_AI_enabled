@@ -46,24 +46,40 @@ services:
     expose:
       - "8001"
 
-  # Owns uploaded images: binary files on disk + a Postgres row per image.
-  # Trusts the gateway's X-User-Id header, same as profile-service.
+  # Owns uploaded images: real AWS S3 + CloudFront as of Phase 4 of the
+  # production-scale plan (see image_service/main.py's module docstring) —
+  # a Postgres row per image still, but the bytes themselves live in S3, not
+  # on local disk. Trusts the gateway's X-User-Id header, same as
+  # profile-service. AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_REGION/
+  # S3_BUCKET_NAME/CLOUDFRONT_DOMAIN come from the root .env file (see
+  # scripts/setup-aws-phase4.sh) via compose's automatic ${VAR} substitution
+  # — same mechanism already used for support-chatbot-service's LANGSMITH_*
+  # vars below.
   image-service:
     build: ./image_service
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
-      IMAGE_STORE_DIR: /app/image_store
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      CLOUDFRONT_DOMAIN: ${CLOUDFRONT_DOMAIN}
+      # 2026-08-21 (Phase 4): replaced — local disk storage is gone. Kept
+      # for history per standing rule:
+      # IMAGE_STORE_DIR: /app/image_store
     depends_on:
       db:
         condition: service_healthy
     expose:
       - "8003"
-    volumes:
-      # Bind mount (not an anonymous volume): ties the container path to a
-      # real folder in the repo, so uploaded files are visible on the host at
-      # ./image_store/ and survive `docker compose down` — needed to actually
-      # verify "file on disk matches DB row" from outside the container.
-      - ./image_store:/app/image_store
+    # 2026-08-21 (Phase 4): replaced — no local disk storage to bind-mount
+    # anymore. Kept for history per standing rule:
+    # volumes:
+    #   # Bind mount (not an anonymous volume): ties the container path to a
+    #   # real folder in the repo, so uploaded files are visible on the host at
+    #   # ./image_store/ and survive `docker compose down` — needed to actually
+    #   # verify "file on disk matches DB row" from outside the container.
+    #   - ./image_store:/app/image_store
 
   # Swipe decisions. Trusts the gateway's X-User-Id header, same as
   # profile-service/image-service. Owns the swipes/matches tables (though as
@@ -130,21 +146,22 @@ services:
   # WebSocket chat between two matched users + persisted message history.
   # Calls auth-service, matcher-service, and session-service directly over
   # this network (see main.py's module docstring) rather than only reading
-  # the shared DB, which is why it needs depends_on all three, not just db.
-  # Also depends on redis now (Phase 2): chat delivery fans out via Pub/Sub
-  # so messages cross replica boundaries — see main.py's module-level Redis
-  # comment for the full mechanism.
+  # the shared DB, which is why it needs depends_on the others, not just db.
+  # Also depends on redis (Phase 2): chat delivery fans out via Pub/Sub so
+  # messages cross replica boundaries — see main.py's module-level Redis
+  # comment. 2026-08-21 (Phase 3): no more DATABASE_URL/Postgres dependency
+  # at all — messages moved to Cassandra, which was this service's only
+  # table, so its Postgres connection is gone entirely. See main.py's
+  # module docstring for the schema/reasoning.
   direct-msg:
     build: ./direct_msg
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
       AUTH_SERVICE_URL: http://auth-service:8002
       MATCHER_SERVICE_URL: http://matcher-service:8004
       SESSION_SERVICE_URL: http://session-service:8006
       REDIS_URL: redis://redis:6379/0
+      CASSANDRA_HOSTS: cassandra
     depends_on:
-      db:
-        condition: service_healthy
       auth-service:
         condition: service_started
       matcher-service:
@@ -152,6 +169,8 @@ services:
       session-service:
         condition: service_started
       redis:
+        condition: service_healthy
+      cassandra:
         condition: service_healthy
     expose:
       - "8007"
@@ -275,6 +294,69 @@ services:
       timeout: 3s
       retries: 10
 
+  # Chat message storage (Phase 3 of the production-scale plan), replacing
+  # direct_msg's Postgres `messages` table — see direct_msg/main.py's module
+  # docstring for the schema/reasoning. Single-node dev cluster: real
+  # replication needs multiple nodes, same "not possible on one laptop
+  # container" caveat as redpanda's replicas=1. Healthcheck uses cqlsh
+  # (bundled in the image) since Cassandra's JVM startup is noticeably
+  # slower than Postgres's — services depending on it need to wait for it
+  # to actually be ready to accept CQL connections, not just for the
+  # container process to exist.
+  cassandra:
+    image: cassandra:4.1
+    # On both networks: "default" is how every other service (direct-msg,
+    # etc.) still reaches it by DNS name, same as always; cassandra_net is
+    # where it gets the fixed IP cassandra-web needs (see that network's
+    # top-level comment).
+    networks:
+      default: {}
+      cassandra_net:
+        ipv4_address: 172.28.0.10
+    volumes:
+      # Named volume, same reasoning as Postgres's pgdata below — without
+      # this, Cassandra's data directory is just the container's own
+      # writable layer, wiped on every recreate (not just restart). Real
+      # bug found during Phase 3 verification: recreating this container
+      # to attach the static-IP network (above) silently lost all message
+      # data because this volume didn't exist yet at that point.
+      - cassandra_data:/var/lib/cassandra
+    expose:
+      - "9042"
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  # Dev-only browser UI for Cassandra — same purpose/pattern as pgweb below
+  # for Postgres, not part of the app itself. Lets you browse keyspaces/
+  # tables/rows without going through cqlsh by hand.
+  cassandra-web:
+    image: metavige/cassandra-web:latest
+    # Only needs to reach cassandra, and only by the fixed IP (its startup
+    # script rejects a DNS hostname here — see the cassandra_net top-level
+    # comment) — so this is the one service in the whole file that doesn't
+    # also need the default network.
+    networks:
+      - cassandra_net
+    environment:
+      CASSANDRA_HOST: 172.28.0.10
+      # Our Cassandra container has no authentication enabled at all (the
+      # default AllowAllAuthenticator) — these credentials are ignored
+      # server-side, but cassandra-web's own startup script unconditionally
+      # passes --username/--password and errors out on an empty value, so
+      # something has to be set regardless. "cassandra"/"cassandra" is the
+      # image's own conventional default superuser pair.
+      CASSANDRA_USER: cassandra
+      CASSANDRA_PASSWORD: cassandra
+    ports:
+      - "3001:3000"
+    depends_on:
+      cassandra:
+        condition: service_healthy
+
   # Postgres itself doesn't speak Prometheus's format — this sidecar queries
   # it directly (pg_database_size, connection counts, etc.) and re-exposes
   # the results as a normal /metrics endpoint, so it can be scraped exactly
@@ -354,3 +436,19 @@ services:
 
 volumes:
   pgdata: # named volume so DB data survives `docker compose down`
+  cassandra_data: # named volume so Cassandra data survives container recreation, same reasoning as pgdata
+
+networks:
+  # Every service is on the implicit "default" network unless it says
+  # otherwise (DNS-name-based lookup, e.g. "cassandra:9042" from direct-msg
+  # — this is how every other service already reaches each other). This
+  # custom network exists for exactly one reason: cassandra-web's own
+  # startup script needs a literal IP address for Cassandra, not a DNS
+  # name (see cassandra-web's own comment) — a fixed subnet lets cassandra
+  # get a static IP that survives container recreation, instead of hand-
+  # updating an IP every time cassandra gets rebuilt.
+  cassandra_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

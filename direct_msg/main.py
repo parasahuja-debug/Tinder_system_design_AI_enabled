@@ -22,20 +22,38 @@ call, to matcher-service's `GET /matches/{match_id}`, to confirm the match
 exists and this caller is actually one of its two participants — see that
 endpoint's docstring in matcher_service/main.py for why. Both checks happen
 once, at connection time, not per message.
+
+Message storage (2026-08-21, Phase 3 of the production-scale plan): moved
+from Postgres to Cassandra. `match_id` is the partition key and `id` (a
+TIMEUUID) is the clustering key, so "every message in this thread, in
+order" — the only query this service ever runs against history — is a
+single-partition read with no index needed, unlike the Postgres version.
+See the Cassandra wiring below for the schema and cassandra_execute for
+why calls run through run_in_executor (the driver is synchronous, not
+natively async like httpx/redis.asyncio).
 """
 
 import asyncio
+import datetime
 import json
 import os
 import time
-import uuid
+# 2026-08-21 (Phase 3): uuid.uuid4() (for message ids) replaced by
+# cassandra.util's TimeUUID helpers below — messages moved from Postgres to
+# Cassandra, see this module's docstring.
+# import uuid
 
 import httpx
 import redis.asyncio as redis
+from cassandra.cluster import Cluster
+from cassandra.util import datetime_from_uuid1, uuid_from_time
 from fastapi import FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from sqlalchemy import Column, DateTime, String, create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy.sql import func
+# 2026-08-21 (Phase 3): replaced — messages moved from Postgres to
+# Cassandra, see this module's docstring and the cassandra_execute helper
+# below. Kept for history per standing rule:
+# from sqlalchemy import Column, DateTime, String, create_engine
+# from sqlalchemy.orm import declarative_base, sessionmaker
+# from sqlalchemy.sql import func
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 # --- Chat fan-out via Redis Pub/Sub (Phase 2 of the production-scale plan) --
@@ -67,55 +85,108 @@ WS_FORBIDDEN = 4403  # custom close code: token is valid but caller isn't in thi
 # new to this service specifically: it's the first service that talks to
 # other services over HTTP rather than just reading the shared DB, so it
 # needs to know where they live.
-DATABASE_URL = os.environ["DATABASE_URL"]
+# 2026-08-21 (Phase 3): replaced — messages moved to Cassandra, so this
+# service no longer talks to Postgres at all. Kept for history per standing
+# rule:
+# DATABASE_URL = os.environ["DATABASE_URL"]
 AUTH_SERVICE_URL = os.environ.get("AUTH_SERVICE_URL", "http://auth-service:8002")
 MATCHER_SERVICE_URL = os.environ.get("MATCHER_SERVICE_URL", "http://matcher-service:8004")
 SESSION_SERVICE_URL = os.environ.get("SESSION_SERVICE_URL", "http://session-service:8006")
 
-# --- Database wiring ---------------------------------------------------------
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(bind=engine)
-Base = declarative_base()
+# 2026-08-21 (Phase 3): replaced — messages moved to Cassandra (see this
+# module's docstring for the full reasoning: match_id as partition key
+# means "every message in this thread, in order" is a single-partition
+# read, no index needed the way Postgres needed one here). Kept for
+# history per standing rule:
+# engine = create_engine(DATABASE_URL)
+# SessionLocal = sessionmaker(bind=engine)
+# Base = declarative_base()
+#
+#
+# class Message(Base):
+#     """One row per sent chat message.
+#
+#     Why a generated uuid `id` rather than reusing some natural key (unlike
+#     Swipe in matcher_service, which reuses (swiper_id, target_id)): a message
+#     has no natural key of its own — the same two people can send arbitrarily
+#     many messages in the same match, so nothing about the row's content is
+#     unique on its own.
+#     """
+#
+#     __tablename__ = "messages"
+#
+#     id = Column(String, primary_key=True)  # uuid; a message has no natural key, see docstring above
+#
+#     # Which chat thread this belongs to. Indexed because the only query this
+#     # service ever runs against history is "every message in this thread, in
+#     # order" (see get_history below) — without the index that's a full table
+#     # scan once message volume grows.
+#     match_id = Column(String, nullable=False, index=True)
+#
+#     # Who sent it — always the user_id this service itself resolved via
+#     # auth-service's /validate at connect time, never taken from the message
+#     # payload the client sends. Same "identity comes from the trusted side,
+#     # never the body" rule every other service follows for X-User-Id.
+#     sender_id = Column(String, nullable=False)
+#
+#     body = Column(String, nullable=False)  # the message text itself
+#
+#     # server_default=func.now(), not a client-supplied timestamp: the DB
+#     # clock is the one source of truth for ordering, so two messages can
+#     # never claim the same "when" based on clock skew between two users'
+#     # browsers.
+#     created_at = Column(DateTime(timezone=True), server_default=func.now())
+#
+#
+# # Build-week convention, same as every other service: no migration tool,
+# # each service creates its own tables on startup.
+# Base.metadata.create_all(bind=engine)
+
+# --- Cassandra wiring (Phase 3) ----------------------------------------------
+# Cluster(...) can take a list of node hostnames (a real multi-node cluster
+# would list several, so the driver has more than one entry point) — here
+# just the one dev container. .connect() with no keyspace argument connects
+# generically, so the two statements below can create the keyspace before
+# anything tries to use it.
+CASSANDRA_HOSTS = os.environ.get("CASSANDRA_HOSTS", "cassandra").split(",")
+cassandra_cluster = Cluster(CASSANDRA_HOSTS)
+cassandra_session = cassandra_cluster.connect()
+
+# CREATE KEYSPACE is Cassandra's rough equivalent of CREATE DATABASE — a
+# named container for tables. replication_factor: 1 because this is a
+# single-node dev cluster; real replication needs multiple nodes to spread
+# copies across (same caveat as redpanda's replicas=1 in docker-compose.yml).
+cassandra_session.execute("""
+    CREATE KEYSPACE IF NOT EXISTS direct_msg
+    WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}
+""")
+cassandra_session.set_keyspace("direct_msg")
+
+# match_id is the partition key (everything for one thread lives together);
+# id is a TIMEUUID, both the message's unique identifier and its ordering
+# key — see this module's docstring for why a TIMEUUID instead of a plain
+# timestamp column. CLUSTERING ORDER BY id ASC means rows come back
+# oldest-first automatically, matching get_history's needs with no
+# application-side sorting.
+cassandra_session.execute("""
+    CREATE TABLE IF NOT EXISTS messages (
+        match_id text,
+        id timeuuid,
+        sender_id text,
+        body text,
+        PRIMARY KEY (match_id, id)
+    ) WITH CLUSTERING ORDER BY (id ASC)
+""")
 
 
-class Message(Base):
-    """One row per sent chat message.
-
-    Why a generated uuid `id` rather than reusing some natural key (unlike
-    Swipe in matcher_service, which reuses (swiper_id, target_id)): a message
-    has no natural key of its own — the same two people can send arbitrarily
-    many messages in the same match, so nothing about the row's content is
-    unique on its own.
+async def cassandra_execute(query, params=None):
+    """Runs a cassandra-driver call without blocking this service's shared
+    asyncio event loop — see the explanation above this edit for why
+    run_in_executor, not the driver's own execute_async().
     """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: cassandra_session.execute(query, params))
 
-    __tablename__ = "messages"
-
-    id = Column(String, primary_key=True)  # uuid; a message has no natural key, see docstring above
-
-    # Which chat thread this belongs to. Indexed because the only query this
-    # service ever runs against history is "every message in this thread, in
-    # order" (see get_history below) — without the index that's a full table
-    # scan once message volume grows.
-    match_id = Column(String, nullable=False, index=True)
-
-    # Who sent it — always the user_id this service itself resolved via
-    # auth-service's /validate at connect time, never taken from the message
-    # payload the client sends. Same "identity comes from the trusted side,
-    # never the body" rule every other service follows for X-User-Id.
-    sender_id = Column(String, nullable=False)
-
-    body = Column(String, nullable=False)  # the message text itself
-
-    # server_default=func.now(), not a client-supplied timestamp: the DB
-    # clock is the one source of truth for ordering, so two messages can
-    # never claim the same "when" based on clock skew between two users'
-    # browsers.
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-
-# Build-week convention, same as every other service: no migration tool,
-# each service creates its own tables on startup.
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="direct_msg")
 
@@ -373,22 +444,43 @@ async def chat(websocket: WebSocket, match_id: str):
             if not body:
                 continue  # ignore empty/whitespace-only sends rather than persisting blank rows
 
-            message = Message(id=str(uuid.uuid4()), match_id=match_id, sender_id=user_id, body=body)
-            db = SessionLocal()
-            try:
-                db.add(message)
-                db.commit()
-                db.refresh(message)  # pulls back the DB-assigned created_at so we can echo the real value
-            finally:
-                db.close()
+            # 2026-08-21 (Phase 3): replaced — wrote a SQLAlchemy Message row
+            # to Postgres, with the DB assigning created_at (server_default=
+            # func.now()) so the DB clock was the source of truth for
+            # ordering. Superseded by the Cassandra insert below, which
+            # generates the TIMEUUID client-side instead — see this module's
+            # docstring for that behavior shift (process clock, not DB
+            # clock, now decides ordering). Kept for history per standing
+            # rule:
+            # message = Message(id=str(uuid.uuid4()), match_id=match_id, sender_id=user_id, body=body)
+            # db = SessionLocal()
+            # try:
+            #     db.add(message)
+            #     db.commit()
+            #     db.refresh(message)  # pulls back the DB-assigned created_at so we can echo the real value
+            # finally:
+            #     db.close()
+            # Generated client-side (this process's clock), not server-side
+            # — Cassandra's INSERT has no RETURNING-equivalent, so knowing
+            # the id/timestamp immediately (to echo back to the sender)
+            # means generating it before the write, not reading it back
+            # after. uuid_from_time (not Python's stdlib uuid.uuid1()) is
+            # cassandra-driver's own recommended way to build a TIMEUUID
+            # from a specific datetime.
+            created_at = datetime.datetime.now(datetime.timezone.utc)
+            message_id = uuid_from_time(created_at)
+            await cassandra_execute(
+                "INSERT INTO messages (match_id, id, sender_id, body) VALUES (%s, %s, %s, %s)",
+                (match_id, message_id, user_id, body),
+            )
             CHAT_MESSAGE_COUNT.inc()  # business metric: a message was actually persisted
 
             payload = {
-                "id": message.id,
-                "match_id": message.match_id,
-                "sender_id": message.sender_id,
-                "body": message.body,
-                "created_at": message.created_at.isoformat(),
+                "id": str(message_id),
+                "match_id": match_id,
+                "sender_id": user_id,
+                "body": body,
+                "created_at": created_at.isoformat(),
             }
             # Echo back to the sender too, not just the recipient: the UI
             # renders the server-persisted version (real id, real DB
@@ -456,26 +548,48 @@ async def get_history(match_id: str, x_user_id: str = Header(default=None)):
     if not await verify_match(match_id, x_user_id):
         raise HTTPException(status_code=403, detail="Not a participant in this match")
 
-    db = SessionLocal()
-    try:
-        messages = (
-            db.query(Message)
-            .filter(Message.match_id == match_id)
-            .order_by(Message.created_at.asc())  # oldest first: a chat thread reads top-to-bottom
-            .all()
-        )
-        return [
-            {
-                "id": m.id,
-                "match_id": m.match_id,
-                "sender_id": m.sender_id,
-                "body": m.body,
-                "created_at": m.created_at,
-            }
-            for m in messages
-        ]
-    finally:
-        db.close()
+    # 2026-08-21 (Phase 3): replaced — queried Postgres via SQLAlchemy.
+    # Superseded by the Cassandra read below. Kept for history per standing
+    # rule:
+    # db = SessionLocal()
+    # try:
+    #     messages = (
+    #         db.query(Message)
+    #         .filter(Message.match_id == match_id)
+    #         .order_by(Message.created_at.asc())  # oldest first: a chat thread reads top-to-bottom
+    #         .all()
+    #     )
+    #     return [
+    #         {
+    #             "id": m.id,
+    #             "match_id": m.match_id,
+    #             "sender_id": m.sender_id,
+    #             "body": m.body,
+    #             "created_at": m.created_at,
+    #         }
+    #         for m in messages
+    #     ]
+    # finally:
+    #     db.close()
+    # ORDER BY id ASC is explicit here even though it already matches the
+    # table's declared CLUSTERING ORDER BY — same "state it, don't rely on
+    # an implicit default" spirit as the original's explicit .order_by()
+    # call. datetime_from_uuid1 pulls the embedded timestamp back out of
+    # each row's TIMEUUID for the response's created_at field.
+    rows = await cassandra_execute(
+        "SELECT match_id, id, sender_id, body FROM messages WHERE match_id = %s ORDER BY id ASC",
+        (match_id,),
+    )
+    return [
+        {
+            "id": str(row.id),
+            "match_id": row.match_id,
+            "sender_id": row.sender_id,
+            "body": row.body,
+            "created_at": datetime_from_uuid1(row.id),
+        }
+        for row in rows
+    ]
 
 
 @app.get("/health")

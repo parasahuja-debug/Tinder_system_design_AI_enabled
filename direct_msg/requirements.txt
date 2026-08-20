@@ -1,4 +1,4 @@
-# direct_msg runtime deps. Same DB stack as most services, plus:
+# direct_msg runtime deps.
 # - httpx: this is the first service that calls other services over HTTP
 #   (auth-service /validate, matcher-service /matches/{id}, session-service
 #   /session/*) rather than only reading the shared DB, so it needs a client.
@@ -8,10 +8,14 @@
 #   [standard] extra on other services' uvicorn pin already includes it, but
 #   it's called out explicitly here since this is the one service that
 #   depends on it for its core feature, not just incidentally.
+# 2026-08-21 (Phase 3): sqlalchemy/psycopg2 removed — messages moved to
+# Cassandra, which was this service's only Postgres table, so the Postgres
+# stack goes entirely. Kept for history per standing rule:
+# sqlalchemy==2.0.36
+# psycopg2-binary==2.9.10
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
-sqlalchemy==2.0.36
-psycopg2-binary==2.9.10
 httpx==0.28.1
 prometheus-client==0.21.1 # /metrics endpoint for Prometheus scraping (Day 6)
 redis==5.2.1               # chat fan-out via Pub/Sub, redis.asyncio (Phase 2)
+cassandra-driver==3.29.2   # message storage (Phase 3) — see main.py's module docstring

@@ -13,11 +13,16 @@ service directly (see CLAUDE.md's auth model).
 """
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import RedirectResponse
+# 2026-08-21 (Phase 4): FileResponse was only used to serve images from
+# local disk, which get_image_file no longer does. Kept for history per
+# standing rule:
+# from fastapi.responses import FileResponse
 from sqlalchemy import create_engine, Column, String, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+import boto3
 import os
 import time
 import uuid
@@ -27,10 +32,31 @@ import uuid
 # host is `db`, not `localhost`.
 DATABASE_URL = os.environ["DATABASE_URL"]
 
-# Where uploaded files live *inside the container*. docker-compose mounts the
-# repo's image_store/ directory here, so files also show up on the host at
-# ./image_store/, matching the repo layout doc in CLAUDE.md.
-IMAGE_STORE_DIR = os.environ.get("IMAGE_STORE_DIR", "/app/image_store")
+# 2026-08-21 (Phase 4 of the production-scale plan): images moved to real
+# AWS S3 + CloudFront — local disk storage is gone. Kept for history per
+# standing rule:
+# # Where uploaded files live *inside the container*. docker-compose mounts the
+# # repo's image_store/ directory here, so files also show up on the host at
+# # ./image_store/, matching the repo layout doc in CLAUDE.md.
+# IMAGE_STORE_DIR = os.environ.get("IMAGE_STORE_DIR", "/app/image_store")
+
+# --- S3 + CloudFront wiring (Phase 4) ---------------------------------------
+# Explicit credentials/region from env, not boto3's implicit credential-chain
+# scanning (which would also read AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY,
+# but from AWS_DEFAULT_REGION, a different var name than our AWS_REGION) —
+# same "explicit, not implicit" convention every other service in this repo
+# already follows for its own config.
+AWS_REGION = os.environ["AWS_REGION"]
+S3_BUCKET_NAME = os.environ["S3_BUCKET_NAME"]
+# CloudFront's own domain, not the S3 bucket's — this is the whole point of
+# Phase 4: images are served from AWS's edge network, never directly from S3.
+CLOUDFRONT_DOMAIN = os.environ["CLOUDFRONT_DOMAIN"]
+s3_client = boto3.client(
+    "s3",
+    region_name=AWS_REGION,
+    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+)
 
 # Product rule from the build plan: at most 5 images per user. Also doubles
 # as a bound on per-user disk usage.
@@ -89,10 +115,12 @@ class Image(Base):
 # service (Alembic is backlog).
 Base.metadata.create_all(bind=engine)
 
-# Make sure the on-disk storage root exists before any upload tries to write
-# into it. On a fresh volume/first run this directory doesn't exist yet;
-# exist_ok=True makes this a no-op on every later restart.
-os.makedirs(IMAGE_STORE_DIR, exist_ok=True)
+# 2026-08-21 (Phase 4): no local disk storage root to create anymore — see
+# the import block's comment. Kept for history per standing rule:
+# # Make sure the on-disk storage root exists before any upload tries to write
+# # into it. On a fresh volume/first run this directory doesn't exist yet;
+# # exist_ok=True makes this a no-op on every later restart.
+# os.makedirs(IMAGE_STORE_DIR, exist_ok=True)
 
 app = FastAPI(title="image_service")
 
@@ -194,12 +222,38 @@ def upload_image(file: UploadFile = File(...), x_user_id: str = Header(default=N
         if len(contents) > MAX_FILE_SIZE_BYTES:
             raise HTTPException(status_code=400, detail="File too large (max 5MB)")
 
+        # 2026-08-21 (Phase 4): replaced — wrote the file to local disk, then
+        # stored a path our own /images/{id} route resolved later. Superseded
+        # by the S3 upload below, with url now the real CloudFront URL
+        # directly (no round-trip through this service to serve the bytes
+        # themselves — see get_image_file's docstring for the consequence).
+        # Kept for history per standing rule:
+        # image_id = str(uuid.uuid4())
+        # user_dir = os.path.join(IMAGE_STORE_DIR, user_id)
+        # os.makedirs(user_dir, exist_ok=True)
+        # file_path = os.path.join(user_dir, f"{image_id}{ext}")
+        # with open(file_path, "wb") as f:
+        #     f.write(contents)
+        #
+        # try:
+        #     new_image = Image(
+        #         id=image_id,
+        #         profile_id=user_id,
+        #         original_filename=original_filename,
+        #         extension=ext,
+        #         url=f"/images/{image_id}",
+        #     )
+        #     db.add(new_image)
+        #     db.commit()
+        # except Exception:
+        #     os.remove(file_path)  # compensating action — see docstring
+        #     raise
         image_id = str(uuid.uuid4())
-        user_dir = os.path.join(IMAGE_STORE_DIR, user_id)
-        os.makedirs(user_dir, exist_ok=True)
-        file_path = os.path.join(user_dir, f"{image_id}{ext}")
-        with open(file_path, "wb") as f:
-            f.write(contents)
+        # Same key structure as the old disk path (<user_id>/<image_id><ext>)
+        # — no functional reason it has to match, just keeps the mental model
+        # consistent with what this service already did.
+        s3_key = f"{user_id}/{image_id}{ext}"
+        s3_client.put_object(Bucket=S3_BUCKET_NAME, Key=s3_key, Body=contents)
 
         try:
             new_image = Image(
@@ -207,12 +261,12 @@ def upload_image(file: UploadFile = File(...), x_user_id: str = Header(default=N
                 profile_id=user_id,
                 original_filename=original_filename,
                 extension=ext,
-                url=f"/images/{image_id}",
+                url=f"https://{CLOUDFRONT_DOMAIN}/{s3_key}",
             )
             db.add(new_image)
             db.commit()
         except Exception:
-            os.remove(file_path)  # compensating action — see docstring
+            s3_client.delete_object(Bucket=S3_BUCKET_NAME, Key=s3_key)  # compensating action — see docstring
             raise
 
         return {"image_id": image_id, "url": new_image.url, "original_filename": original_filename}
@@ -260,17 +314,22 @@ def list_images_for_user(user_id: str, x_user_id: str = Header(default=None)):
 
 @app.get("/images/{image_id}")
 def get_image_file(image_id: str, x_user_id: str = Header(default=None)):
-    """Serve the raw bytes of one image, to any authenticated caller. This is
-    what a browser's <img src="/images/<id>"> tag actually hits to render a
-    thumbnail — GET /images only ever returns metadata (ids + urls), never
-    the pixel data itself.
+    """Redirect to the real CloudFront URL for one image, to any
+    authenticated caller. This is what a browser's <img src="/images/<id>">
+    tag actually hits — GET /images (list) only ever returns metadata (ids +
+    urls), never the pixel data itself.
 
-    Always checks the DB for a matching row before touching disk — never
-    just "does a file exist at this path". That still closes the orphan-file
-    case (a failed upload leaves a file with no DB row, so it can never be
-    served) even though ownership is no longer checked here.
+    2026-08-21 (Phase 4): redirects instead of serving bytes directly (see
+    the commented-out prior version below, which read from local disk).
+    Real consequence, not just an implementation detail: once a client
+    follows the redirect, every subsequent load of that same image URL
+    (browser cache, a bookmarked link, anyone who has the URL) goes straight
+    to CloudFront — this route, and this service's own auth check, are no
+    longer in the path at all. See the security tradeoff already discussed:
+    the image_id UUID being unguessable is now the only protection, not real
+    authentication, for the actual image bytes.
     """
-    get_user_id(x_user_id)  # still requires a logged-in caller; just no longer requires ownership
+    get_user_id(x_user_id)  # still requires a logged-in caller to get the redirect itself
     db = SessionLocal()
     try:
         # 2026-08-13: replaced — this used to also filter on
@@ -289,10 +348,13 @@ def get_image_file(image_id: str, x_user_id: str = Header(default=None)):
         image = db.query(Image).filter(Image.id == image_id).first()
         if not image:
             raise HTTPException(status_code=404, detail="Image not found")
-        # Path is built from the image's actual owner (image.profile_id), not
-        # the caller — the file lives under the owner's folder on disk
-        # regardless of who's viewing it now.
-        file_path = os.path.join(IMAGE_STORE_DIR, image.profile_id, f"{image.id}{image.extension}")
-        return FileResponse(file_path)
+        # 2026-08-21 (Phase 4): replaced — served the file straight from
+        # local disk. Kept for history per standing rule:
+        # # Path is built from the image's actual owner (image.profile_id), not
+        # # the caller — the file lives under the owner's folder on disk
+        # # regardless of who's viewing it now.
+        # file_path = os.path.join(IMAGE_STORE_DIR, image.profile_id, f"{image.id}{image.extension}")
+        # return FileResponse(file_path)
+        return RedirectResponse(url=image.url)
     finally:
         db.close()

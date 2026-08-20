@@ -25,6 +25,11 @@ LEARNING.md
 # Stays local only, same reasoning as LEARNING.md above.
 .claude/plans/cached-leaping-lovelace.md
 
+# One-off interactive AWS setup wizard (Phase 4) — tied to this specific
+# AWS account/console session, not a repeatable path for anyone else who
+# clones this repo. Local only.
+scripts/setup-aws-phase4.sh
+
 # Editor / OS noise
 .DS_Store
 .idea/

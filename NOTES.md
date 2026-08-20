@@ -368,6 +368,20 @@ mem0 fetching -
 - docker-compose.yml - dependency on redis
 - updating direct_msg/CLAUDE.md's "Talks to" and "Env" sections:
 
+- cassandra in docker-compose.yml
+- direct_msg/requirements.txt - add cassandra
+- direct_msg/main.py
+    one design piece worth flagging: cassandra-driver's Python client is synchronous (blocking), not natively async, unlike httpx/redis.asyncio. Since direct_msg is a fully async service where every connection shares one event loop, calling a blocking method directly would freeze every other WebSocket connection and HTTP request while it runs. The standard fix is run_in_executor — hand the blocking call off to a background thread pool and await its result, rather than trying to hand-roll a bridge between the driver's own callback-based async model and asyncio's (especially given how many subtle asyncio bugs we just worked through in Phase 2 — this is the simpler, safer option here).
+
+- /scripts for wizard - AWS setup
+    - when you run it: it opens your browser to the right AWS console page, tells you exactly what to click/fill in, then waits for you to paste back whatever value that step produced (a bucket name, an access key, a CloudFront domain). It saves each value into this project's .env file as it goes, so if you stop partway and come back later, it remembers what's already done. I can't run it myself — it needs your actual AWS account, your actual clicks, your actual credentials, which is exactly the point (per the "Executing actions with care" principle — provisioning real billed infrastructure with real credentials isn't something I should be doing autonomously on your behalf).
+
+- image_service/main.py
+    to add AWS boto3 SDK
+- requirements-txt boto3
+- docker-compose.yml - env variable for aws
+
+
 
 
 

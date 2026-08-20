@@ -7,3 +7,4 @@ sqlalchemy==2.0.36
 psycopg2-binary==2.9.10
 python-multipart==0.0.20
 prometheus-client==0.21.1 # /metrics endpoint for Prometheus scraping (Day 6)
+boto3==1.35.90              # AWS SDK — S3 upload/delete for image storage (Phase 4)
