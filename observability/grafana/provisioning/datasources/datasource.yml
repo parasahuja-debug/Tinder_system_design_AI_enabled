@@ -1,0 +1,12 @@
+# Auto-registers Prometheus as a Grafana datasource on container startup —
+# same internal compose hostname every other service uses to reach one
+# another (prometheus:9090), not localhost:9090 (that's only how the HOST
+# reaches it, via the port mapping in docker-compose.yml).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy # Grafana's backend calls Prometheus server-side, not the browser directly
+    url: http://prometheus:9090
+    isDefault: true

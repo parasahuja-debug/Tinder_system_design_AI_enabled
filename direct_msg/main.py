@@ -24,16 +24,38 @@ endpoint's docstring in matcher_service/main.py for why. Both checks happen
 once, at connection time, not per message.
 """
 
+import asyncio
+import json
 import os
 import time
 import uuid
 
 import httpx
+import redis.asyncio as redis
 from fastapi import FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from sqlalchemy import Column, DateTime, String, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.sql import func
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+
+# --- Chat fan-out via Redis Pub/Sub (Phase 2 of the production-scale plan) --
+# Why this is needed: `connections` below only ever holds sockets for users
+# connected to THIS process. Once direct_msg runs as multiple replicas, a
+# message for a user connected to a DIFFERENT replica can't be delivered by
+# checking a local dict alone — see chat()'s connect/disconnect logic and
+# the message-send code below for how subscribe/publish routes around that.
+# `redis.asyncio`, not the plain sync `redis` client session_service uses:
+# this service is already fully async (FastAPI async routes, WebSocket
+# handler), so the Redis client needs to be awaitable the same way httpx's
+# AsyncClient already is.
+REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+pubsub = redis_client.pubsub()
+# Holds the running redis_listener task once start_redis_listener (below)
+# creates it — a real reference has to live somewhere, since asyncio's event
+# loop only holds a WEAK reference to tasks (see start_redis_listener's
+# docstring for why that matters).
+_redis_listener_task = None
 
 WS_AUTH_FAILED = 4401  # custom close code (4000-4999 range is reserved for app use): bad/missing token
 WS_FORBIDDEN = 4403  # custom close code: token is valid but caller isn't in this match
@@ -151,6 +173,83 @@ CHAT_MESSAGE_COUNT = Counter("chat_messages_total", "Total chat messages persist
 connections: dict[str, WebSocket] = {}
 
 
+async def redis_listener():
+    """Runs forever in the background — the other half of the fan-out
+    mechanism described in the module-level Redis comment above. Publishing
+    (in the message-send loop below) is one side; this is the side that
+    turns a received broadcast into a real push down a real local socket.
+
+    2026-08-20: uses get_message() in a poll loop, not pubsub.listen()
+    directly (see commented-out prior version below) — discovered via
+    testing that listen() internally loops `while self.subscribed`, and
+    this task starts at app boot, before any user has connected and
+    therefore before any subscribe() call has ever happened. That means
+    listen() sees self.subscribed == False at that exact moment, its loop
+    body never runs even once, and the generator finishes immediately —
+    silently, no exception, no log — ending this task before it ever does
+    anything. get_message() handles "nothing subscribed yet" gracefully
+    instead, simply returning None and letting the loop keep polling; this
+    is redis-py's own documented recommendation for a long-lived listener
+    whose subscriptions change over time, rather than being fixed upfront.
+    """
+    # Kept the broken version for history per standing rule:
+    # async for message in pubsub.listen():
+    #     if message["type"] != "message":
+    #         continue  # listen() also yields subscribe/unsubscribe confirmations, not just real messages
+    #     user_id = message["channel"].split(":", 1)[1]  # channel is "chat:<user_id>"
+    #     recipient_ws = connections.get(user_id)
+    #     if recipient_ws is not None:
+    #         await recipient_ws.send_json(json.loads(message["data"]))
+    while True:
+        try:
+            # ignore_subscribe_messages=True: get_message() filters out
+            # subscribe/unsubscribe confirmations for us, unlike listen()
+            # where that filtering had to be done by hand above.
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+        except RuntimeError:
+            # redis-py raises this specific error ("pubsub connection not
+            # set") whenever nobody is currently subscribed to anything —
+            # true at startup (this loop starts before any user has ever
+            # connected) and true again any time the last subscriber just
+            # disconnected. Not a real failure, just "nothing to read yet";
+            # sleep briefly and keep polling rather than letting it crash
+            # this task, which is exactly what happened before this fix —
+            # silently, since asyncio only logs an unhandled task exception
+            # at garbage-collection time, and this task is never collected
+            # (see start_redis_listener's module-level task reference).
+            await asyncio.sleep(1.0)
+            continue
+        if message is None:
+            continue  # nothing arrived within the timeout — keep polling
+        user_id = message["channel"].split(":", 1)[1]  # channel is "chat:<user_id>"
+        recipient_ws = connections.get(user_id)
+        if recipient_ws is not None:
+            await recipient_ws.send_json(json.loads(message["data"]))
+
+
+@app.on_event("startup")
+async def start_redis_listener():
+    """Launches redis_listener once the app's event loop actually exists.
+    Why a startup hook and not import time (unlike matcher_consumer's
+    thread): asyncio.create_task() requires a running event loop, which
+    doesn't exist yet at module import — uvicorn creates it afterward.
+    matcher_consumer didn't have this constraint because confluent-kafka's
+    consumer is synchronous, so a plain OS thread (no event loop needed)
+    could start immediately at import time instead.
+
+    2026-08-20: assigns the task to a module-level variable, not a bare
+    asyncio.create_task(...) expression (see commented-out prior version
+    below) — discovered via testing that Python's event loop only holds a
+    WEAK reference to a task. A task nobody else references can be garbage
+    collected mid-run, even before it finishes — exactly what a bare,
+    unreferenced create_task() call risks.
+    """
+    # Kept for history per standing rule:
+    # asyncio.create_task(redis_listener())
+    global _redis_listener_task
+    _redis_listener_task = asyncio.create_task(redis_listener())
+
+
 async def resolve_user_id(token: str) -> str | None:
     """Ask auth-service whether this token is valid, and if so, who it's for.
 
@@ -246,6 +345,14 @@ async def chat(websocket: WebSocket, match_id: str):
 
     connections[user_id] = websocket
 
+    # Subscribe THIS process to this user's channel — from now until
+    # disconnect (below), any process that publishes to "chat:<user_id>"
+    # (including this one, on a different user's send) reaches this
+    # process's redis_listener, which delivers it down the socket just
+    # registered above. See the module-level Redis comment for the full
+    # mechanism.
+    await pubsub.subscribe(f"chat:{user_id}")
+
     # Tell session_service this user is online. Best-effort: presence
     # tracking is a nice-to-have (see session_service's own docstring for
     # why it's not load-bearing yet), so a failed call here shouldn't tear
@@ -287,14 +394,29 @@ async def chat(websocket: WebSocket, match_id: str):
             # renders the server-persisted version (real id, real DB
             # timestamp) instead of trusting its own optimistic guess.
             await websocket.send_json(payload)
-            recipient_ws = connections.get(other_user_id)
-            if recipient_ws is not None:
-                # Only push live if the other person's socket is registered
-                # on *this* process right now — if they're not currently on
-                # their Chat page for this match, the message still landed
-                # in Postgres above; they'll see it via /chat/history on
-                # their next visit, just not live.
-                await recipient_ws.send_json(payload)
+            # 2026-08-20: replaced — this only ever delivered if the
+            # recipient's socket happened to be registered on THIS process,
+            # which silently missed them if they were connected to a
+            # different direct_msg replica. Superseded by the Redis publish
+            # below. Kept for history per standing rule:
+            # recipient_ws = connections.get(other_user_id)
+            # if recipient_ws is not None:
+            #     # Only push live if the other person's socket is registered
+            #     # on *this* process right now — if they're not currently on
+            #     # their Chat page for this match, the message still landed
+            #     # in Postgres above; they'll see it via /chat/history on
+            #     # their next visit, just not live.
+            #     await recipient_ws.send_json(payload)
+            # Publish unconditionally — whichever process (this one or a
+            # different replica) is actually holding other_user_id's socket
+            # is subscribed to this channel and will deliver it via its own
+            # redis_listener (see the module-level Redis comment). If nobody
+            # is subscribed right now (recipient not currently connected
+            # anywhere), this is a no-op broadcast with no listener — same
+            # "they'll see it via /chat/history next visit, just not live"
+            # fallback as before, still true since the message already
+            # landed in Postgres above regardless.
+            await redis_client.publish(f"chat:{other_user_id}", json.dumps(payload))
     except WebSocketDisconnect:
         # Normal end-of-life for a chat session (tab closed, navigated away,
         # network dropped) — not an error condition worth logging loudly.
@@ -304,6 +426,10 @@ async def chat(websocket: WebSocket, match_id: str):
         # connection never lingers in either registry after its socket is
         # actually gone.
         connections.pop(user_id, None)
+        # Mirrors the subscribe() at connect time above — this process no
+        # longer holds this user's socket, so it shouldn't keep receiving
+        # broadcasts meant for them.
+        await pubsub.unsubscribe(f"chat:{user_id}")
         async with httpx.AsyncClient() as client:
             try:
                 await client.post(f"{SESSION_SERVICE_URL}/session/disconnect", json={"user_id": user_id})

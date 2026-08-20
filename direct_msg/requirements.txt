@@ -14,3 +14,4 @@ sqlalchemy==2.0.36
 psycopg2-binary==2.9.10
 httpx==0.28.1
 prometheus-client==0.21.1 # /metrics endpoint for Prometheus scraping (Day 6)
+redis==5.2.1               # chat fan-out via Pub/Sub, redis.asyncio (Phase 2)

@@ -22,19 +22,25 @@ here the way every gateway-facing service has. direct_msg has already
 authenticated the caller itself (see direct_msg/main.py's module docstring
 for how) before it ever tells us who connected.
 
-State is a plain in-memory dict, same "doesn't survive a restart" tradeoff as
-every other build-week service in this repo (no migration tool, no Redis this
-week) — acceptable because a restart just means every connected user's
-browser reconnects and re-registers, same as a real client already has to
-handle a dropped Wi-Fi connection.
+State used to be a plain in-memory dict (see the commented-out `online_users`
+below) — that "doesn't survive a restart" tradeoff was acceptable when there
+was exactly one instance of this service, since a restart just meant every
+connected client reconnected and re-registered. 2026-08-20 (Phase 2 of the
+production-scale plan): moved to Redis, because the whole point of this
+service is presence data shared across replicas — an in-memory dict is
+invisible to any replica other than the one that happened to handle a given
+connect/disconnect call, which defeats that purpose the moment this service
+ever runs as more than one instance.
 """
 
 import datetime
+import os
 import time
 
 from fastapi import FastAPI, Request, Response
 from pydantic import BaseModel
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+import redis
 
 app = FastAPI(title="session_service")
 
@@ -72,12 +78,24 @@ def metrics():
     """
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
-# user_id -> ISO timestamp of when the current connection was registered.
-# A dict, not a set, so /session/{user_id} can report *when* someone came
-# online — useful for debugging ("did this client actually connect recently,
-# or is this a stale entry left behind by a direct_msg crash that skipped
-# the disconnect call?").
-online_users: dict[str, str] = {}
+# 2026-08-20: replaced — presence used to live in this process's own memory,
+# invisible to any other session_service replica. Superseded by the Redis
+# client below. Kept for history per standing rule:
+# # user_id -> ISO timestamp of when the current connection was registered.
+# # A dict, not a set, so /session/{user_id} can report *when* someone came
+# # online — useful for debugging ("did this client actually connect recently,
+# # or is this a stale entry left behind by a direct_msg crash that skipped
+# # the disconnect call?").
+# online_users: dict[str, str] = {}
+
+# Each presence entry is a Redis key "presence:<user_id>" whose value is the
+# ISO timestamp from connect() below — same "value, not just membership"
+# shape the old dict had, still for the same reason: /session/{user_id} can
+# report *when* someone came online, useful for debugging ("did this client
+# actually connect recently, or is this a stale entry left behind by a
+# direct_msg crash that skipped the disconnect call?").
+REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 
 class SessionRequest(BaseModel):
@@ -96,7 +114,10 @@ class SessionRequest(BaseModel):
 def connect(req: SessionRequest):
     """Mark a user online. Called by direct_msg right after it accepts that
     user's WebSocket connection."""
-    online_users[req.user_id] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    # 2026-08-20: replaced — wrote to the in-memory dict. Kept for history
+    # per standing rule:
+    # online_users[req.user_id] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    redis_client.set(f"presence:{req.user_id}", datetime.datetime.now(datetime.timezone.utc).isoformat())
     return {"status": "connected", "user_id": req.user_id}
 
 
@@ -104,10 +125,15 @@ def connect(req: SessionRequest):
 def disconnect(req: SessionRequest):
     """Mark a user offline. Called by direct_msg when that user's WebSocket
     closes (tab closed, network drop, etc.)."""
-    # .pop with a default: disconnecting a user who was never registered (or
-    # already removed) is a no-op, not an error — direct_msg's cleanup path
-    # shouldn't have to first check whether connect() ever succeeded.
-    online_users.pop(req.user_id, None)
+    # 2026-08-20: replaced — popped from the in-memory dict. Kept for
+    # history per standing rule:
+    # # .pop with a default: disconnecting a user who was never registered (or
+    # # already removed) is a no-op, not an error — direct_msg's cleanup path
+    # # shouldn't have to first check whether connect() ever succeeded.
+    # online_users.pop(req.user_id, None)
+    # DEL on a key that doesn't exist is a no-op in Redis too, same
+    # "disconnecting an unregistered user isn't an error" reasoning as above.
+    redis_client.delete(f"presence:{req.user_id}")
     return {"status": "disconnected", "user_id": req.user_id}
 
 
@@ -120,7 +146,10 @@ def get_status(user_id: str):
     — but this is the seam a future online-indicator/read-receipt feature
     would hang off of.
     """
-    connected_at = online_users.get(user_id)
+    # 2026-08-20: replaced — read from the in-memory dict. Kept for history
+    # per standing rule:
+    # connected_at = online_users.get(user_id)
+    connected_at = redis_client.get(f"presence:{user_id}")
     return {"user_id": user_id, "online": connected_at is not None, "connected_at": connected_at}
 
 

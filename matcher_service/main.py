@@ -18,9 +18,20 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from confluent_kafka import Producer
+import json
 import os
 import time
-import uuid
+# 2026-08-20: replaced — uuid was only used for Match id generation inside
+# record_swipe's inline match-check, which moved to matcher_consumer/main.py.
+# import uuid
+
+# --- Event publishing (Phase 1 of the production-scale plan) ---------------
+# Match *detection* no longer happens inline in this process — see
+# record_swipe below. This producer only publishes the raw swipe event;
+# matcher-consumer is what actually decides whether it's a match.
+REDPANDA_BROKERS = os.environ.get("REDPANDA_BROKERS", "redpanda:9092")
+producer = Producer({"bootstrap.servers": REDPANDA_BROKERS})
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 
@@ -118,14 +129,16 @@ def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-# Business metrics, not generic HTTP ones: the plan asks for swipe/match
-# counts specifically. SWIPE_COUNT is labeled by direction (like vs pass) so
-# Grafana can chart them separately; MATCH_COUNT has no labels since a match
-# is a single kind of event. Both incremented by hand inside record_swipe,
-# right where each event actually happens — same reasoning as auth_service's
-# LOGIN_COUNT.
+# Business metric, not a generic HTTP one: labeled by direction (like vs
+# pass) so Grafana can chart them separately. Incremented by hand inside
+# record_swipe, right where the event actually happens — same reasoning as
+# auth_service's LOGIN_COUNT.
 SWIPE_COUNT = Counter("matcher_swipes_total", "Total swipes recorded", ["direction"])
-MATCH_COUNT = Counter("matcher_matches_total", "Total matches created")
+# 2026-08-20: replaced — match creation moved out of this service entirely
+# (see record_swipe below, Phase 1 of the production-scale plan), so this
+# metric now lives in matcher_consumer/main.py instead, incremented where
+# the Match row is actually inserted. Kept for history per standing rule:
+# MATCH_COUNT = Counter("matcher_matches_total", "Total matches created")
 
 
 class SwipeRequest(BaseModel):
@@ -144,14 +157,12 @@ def get_user_id(x_user_id: str = Header(default=None)) -> str:
 
 @app.post("/swipe", status_code=201)
 def record_swipe(swipe: SwipeRequest, x_user_id: str = Header(default=None)):
-    """Record the caller's swipe decision on a target profile, then check for a mutual match.
-
-    Why the match check happens inline here rather than as a separate async
-    step: match creation must never race (two near-simultaneous "like"
-    swipes on each other must produce exactly one match row, not zero or
-    two), and the simplest way to guarantee that without extra
-    infrastructure is to do the check-and-insert inside the same request
-    that just wrote the second swipe, inside one DB transaction.
+    """Record the caller's swipe decision on a target profile, then publish it
+    for async match detection (see the commented-out Step 2 below for what
+    this function used to do instead, and matcher_consumer/main.py for
+    where that logic now lives — 2026-08-20, Phase 1 of the production-scale
+    plan: at real scale, sharded swipe data can't safely decide "is this a
+    match" in one node's transaction the way Step 2 used to).
     """
     user_id = get_user_id(x_user_id)
 
@@ -177,49 +188,79 @@ def record_swipe(swipe: SwipeRequest, x_user_id: str = Header(default=None)):
             db.add(Swipe(swiper_id=user_id, target_id=swipe.target_id, direction=swipe.direction))
         SWIPE_COUNT.labels(swipe.direction).inc()  # business metric: a swipe decision was recorded
 
-        # Step 2 — only a "like" can ever create a match. A "pass" is fully
-        # handled by step 1 above; nothing further to check.
-        matched = False
-        if swipe.direction == "like":
-            # Step 2a — has the target already liked this user back? Check
-            # for that one specific row rather than scanning all of the
-            # target's swipes, since (swiper_id, target_id) is indexed as
-            # the PK either way.
-            reverse_like = (
-                db.query(Swipe)
-                .filter(
-                    Swipe.swiper_id == swipe.target_id,
-                    Swipe.target_id == user_id,
-                    Swipe.direction == "like",
-                )
-                .first()
-            )
-            if reverse_like:
-                # Step 2b — mutual like confirmed. Put the pair in canonical
-                # (alphabetical) order — same convention the Match model's
-                # columns use — so both directions of "who swiped last" land
-                # on the same lookup.
-                user_a_id, user_b_id = sorted([user_id, swipe.target_id])
-                # Guard against a duplicate row: if this pair was already
-                # matched (e.g. this is a re-swipe replaying an old "like"
-                # after an earlier "pass"), don't insert a second match.
-                already_matched = (
-                    db.query(Match)
-                    .filter(Match.user_a_id == user_a_id, Match.user_b_id == user_b_id)
-                    .first()
-                )
-                if not already_matched:
-                    db.add(Match(id=str(uuid.uuid4()), user_a_id=user_a_id, user_b_id=user_b_id))
-                    matched = True
-                    MATCH_COUNT.inc()  # business metric: a new match was just created
+        # 2026-08-20: replaced — Step 2 used to do the reverse-like check and
+        # Match insert right here, inside this same transaction. Superseded
+        # by the Redpanda publish below, which hands that check off to
+        # matcher_consumer/main.py instead (see this function's docstring
+        # for why). Kept for history per standing rule:
+        # matched = False
+        # if swipe.direction == "like":
+        #     # Step 2a — has the target already liked this user back? Check
+        #     # for that one specific row rather than scanning all of the
+        #     # target's swipes, since (swiper_id, target_id) is indexed as
+        #     # the PK either way.
+        #     reverse_like = (
+        #         db.query(Swipe)
+        #         .filter(
+        #             Swipe.swiper_id == swipe.target_id,
+        #             Swipe.target_id == user_id,
+        #             Swipe.direction == "like",
+        #         )
+        #         .first()
+        #     )
+        #     if reverse_like:
+        #         # Step 2b — mutual like confirmed. Put the pair in canonical
+        #         # (alphabetical) order — same convention the Match model's
+        #         # columns use — so both directions of "who swiped last" land
+        #         # on the same lookup.
+        #         user_a_id, user_b_id = sorted([user_id, swipe.target_id])
+        #         # Guard against a duplicate row: if this pair was already
+        #         # matched (e.g. this is a re-swipe replaying an old "like"
+        #         # after an earlier "pass"), don't insert a second match.
+        #         already_matched = (
+        #             db.query(Match)
+        #             .filter(Match.user_a_id == user_a_id, Match.user_b_id == user_b_id)
+        #             .first()
+        #         )
+        #         if not already_matched:
+        #             db.add(Match(id=str(uuid.uuid4()), user_a_id=user_a_id, user_b_id=user_b_id))
+        #             matched = True
+        #             MATCH_COUNT.inc()  # business metric: a new match was just created
 
-        # Commits the swipe write and (if step 2b inserted one) the new
-        # match row together, in one transaction — see the docstring above
-        # for why that atomicity matters.
+        # Commits the swipe write — Step 2 no longer adds anything else to
+        # this transaction, so this is now just the swipe row.
         db.commit()
-        # `matched` lets the frontend show the "It's a match!" moment right
-        # away, instead of the caller having to separately poll /matches.
-        return {"message": "Swipe recorded", "matched": matched}
+
+        # Publish the event that lets matcher_consumer decide if this is a
+        # match. Sorted pair, not either id alone, as the partition key —
+        # guarantees both directions of a mutual like land on the same
+        # Redpanda partition (see this function's docstring, and
+        # docker-compose.yml's redpanda comment, for the full reasoning).
+        # Runs before finally/db.close() below, so the DB session stays
+        # checked out slightly longer than strictly necessary during this
+        # network call — a minor inefficiency, not a correctness issue.
+        partition_key = ":".join(sorted([user_id, swipe.target_id]))
+        producer.produce(
+            "swipes",
+            key=partition_key,
+            value=json.dumps({"swiper_id": user_id, "target_id": swipe.target_id, "direction": swipe.direction}),
+        )
+        # Blocks until Redpanda actually confirms receipt (not just queued
+        # in this process's memory). Known gap: this confirms Redpanda
+        # *received* the event, not that matcher-consumer successfully
+        # processed it — a crash on the consumer side after this point is a
+        # silent gap in this dev build (no retry/dead-letter handling),
+        # acceptable here, not at real scale.
+        producer.flush(timeout=5)
+
+        # 2026-08-20: replaced — `matched` no longer exists now that Step 2
+        # is commented out above; it used to let the frontend show the
+        # "It's a match!" moment immediately. That's now asynchronous (see
+        # this function's docstring) — the frontend needs a different
+        # trigger (poll /matches, or a future WS push), a known follow-up
+        # not solved in this service. Kept for history per standing rule:
+        # return {"message": "Swipe recorded", "matched": matched}
+        return {"message": "Swipe recorded"}
     finally:
         db.close()
 

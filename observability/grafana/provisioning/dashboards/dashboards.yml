@@ -1,0 +1,15 @@
+# Not a dashboard itself — a "provider" pointing Grafana at a folder to load
+# dashboard JSON files from. The actual panels live in
+# observability/grafana/dashboards/*.json, mounted at the path below.
+apiVersion: 1
+
+providers:
+  - name: tinder-dashboards
+    folder: Tinder
+    type: file
+    options:
+      # Deliberately NOT /etc/grafana/provisioning/dashboards (this file's own
+      # directory) — that's where provider *config* lives; actual dashboard
+      # JSON is mounted separately (see docker-compose.yml's grafana volumes)
+      # so the two don't collide in the same container path.
+      path: /var/lib/grafana/dashboards

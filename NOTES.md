@@ -274,8 +274,99 @@ mem0 fetching -
     MATCH_COUNT has no labels since a match is a single kind of event.
 - direct_msg - 
     which needs the chat-message business counter but there's a wrinkle worth flagging before I write it: the generic track_requests middleware only wraps regular HTTP requests, not WebSocket connections (@app.middleware("http") doesn't intercept the /chat/ws/{match_id} upgrade at all). So the generic metrics will only ever see /chat/history, /health, and /metrics — the WebSocket route itself never shows up in http_requests_total, which is expected and fine.
-    
 
+-  prometheus.yml -
+    Prometheus is just another container
+    on this network. One job per service (not one shared job with 7 targets) so
+    every metric carries a clean job="<service>" label, keeping Grafana queries
+    like rate(http_requests_total{job="direct-msg"}[5m]) simple to write.
+- add - docker-compose.yml the prometheus.yml
+- postgres-exporter added to docker compose for Prometheus to scrape the postgress db space and size.
+- scrape job to prometheus.yml for it - postgress-exporter.
+
+# Prometheus is the piece that polls every service every 15 seconds and records what it saw, with a timestamp, building up an actual time series — "logins per minute over the last hour" is a Prometheus query, not something any single service could answer on its own. 
+# We've only used Counter (monotonically increasing, like auth_logins_total) and Histogram (a distribution, for latency buckets/percentiles). There's also Gauge — a value that goes up and down, like current memory usage, an in-flight request count, a queue depth, or a temperature reading — and Summary, a client-computed variant of histogram. Nothing about Prometheus is tied to "HTTP performance"; it'll happily track a warehouse robot's battery level or a cache's hit rate the same way.
+# Business metrics, arbitrary ones. auth_logins_total, matcher_matches_total, chat_messages_total
+# We are using it for - 
+    Generic, on all 7 core services (auth, profile, image, recommendation, session, matcher, direct_msg):
+
+    - http_requests_total — request count, labeled by method/path/status
+    - http_request_duration_seconds — latency histogram, same labels
+    Business metrics, hand-placed at the specific event, not generic HTTP:
+
+    - auth_logins_total — a real login succeeded (auth-service)
+    - matcher_swipes_total{direction} — a swipe was recorded, split like/pass (matcher-service)
+    - matcher_matches_total — a new match was created (matcher-service)
+    - chat_messages_total — a message was actually persisted (direct-msg)
+    Database-level, via the postgres-exporter sidecar (not from our own app code — Postgres doesn't know about Prometheus at all):
+
+    - pg_database_size_bytes{datname="tinder"} — disk space used by the shared DB
+    - pg_up — whether the exporter can even reach Postgres
+    Built into Prometheus itself, no code of ours involved:
+
+    - up{job=...} — whether each of the 8 scrape targets (7 services + postgres-exporter) is currently reachable — a basic health/uptime signal that came for free the moment each target got added to prometheus.yml
+
+# Grafana
+-  datasource.yml
+    Auto-registers Prometheus as a Grafana datasource on container startup.
+-  dashboards.yml
+    Not a dashboard itself — a "provider" pointing Grafana at a folder to load dashboard JSON files from.
+-  tinder-overview.json
+    a JSON file describing 4 panels, each with a PromQL query (the same kind of query you'd type into Prometheus's own /graph box) 
+
+<Dashboards on top of Prometheus. Datasource + dashboard-provider configs
+  come from provisioning/ (auto-loaded on startup, see the files' own
+  comments); the actual dashboard JSON is mounted separately at the path
+  dashboards.yml's provider points to. Dev-only admin credentials — same
+  spirit as JWT_SECRET's "dev only" comment elsewhere in this file.>
+
+- the Grafana service in docker-compose.yml
+
+<What we specifically have from it right now, in this project:
+- One datasource — Prometheus, nothing else yet (Tempo joins it in Phase 5)
+- One dashboard, "Tinder — Overview," with exactly the 4 panels the plan asked for: logins over time, chat volume, DB size, and per-service request rate as the bonus
+- All of it defined as code (the YAML + JSON files we just wrote) and auto-loaded on container start — not built by clicking through the UI, so it's reproducible from a clean docker compose up every time
+- Auto-refreshing every 10 seconds, showing the last 1 hour by default>
+
+- Redpanda service - 
+    docker-compose.yml -
+    - redpanda is a long-running server — it needs to stay up indefinitely, accepting connections from producers/consumers forever. That's a "service" in the traditional sense.
+    - redpanda-init does one thing (create the two topics) and then exits for good. That's a "job," not a service — fundamentally different shape.
+
+- Changes in matcher_service's - 
+    - record_swipe: Steps 1 (write the Swipe row) and the SWIPE_COUNT metric stay exactly as they are — that part is unrelated to matching and stays synchronous. 
+    - What gets removed is step 2 — the whole reverse-like-check-and-insert-match block — because that logic is moving into the new matcher-consumer service. 
+    <one call to producer.produce(), publishing a small JSON event (swiper_id, target_id, direction) to the swipes topic, with the partition key set to the sorted pair ("A:B", alphabetically) — this is the exact mechanism from our earlier discussion, guaranteeing both directions of a mutual like land on the same partition.>
+    <record_swipe can no longer return "matched": true synchronously, since matching is now the consumer's job, happening after this request has already returned.>
+    <move MATCH_COUNT out of here — it belongs in **matcher-consumer** since that's where matches actually get created now — and rewrite record_swipe>
+
+- matcher_consumer service - 
+    - continuously reading the swipes topic — is a blocking loop (consumer.poll() blocks waiting for the next message) that never returns control on its own. 
+    - it also needs /metrics and /health like every other service. "So the FastAPI app serves those two routes as normal, while the actual Kafka consume loop runs in a separate background thread"
+    <Manual offset commits, not the default auto-commit: --- Shared table access, same exception as recommendation_service: this service writes Match rows and reads Swipe rows from tables matcher_service>
+    - the generic Prometheus metrics + middleware + /metrics endpoint. Same exact pattern as every other service (already covered in depth for auth_service) — copying it here unchanged.
+    - Idempotent behaviour
+    - consume_loop() and starting it in a background thread.
+- Dockerfile
+- requiremenets file 
+- docker-compose.yml
+- prometheus.yml
+
+- session_serive - redis
+    - post("/session/connect - add redis connct 
+    - post("/session/disconnect") - same
+    - get_status(): same
+- docker-compose.yml 
+    - add redis
+    - updating session-service's definition to depend on Redis:
+- adding redis to session_service/requirements.txt:
+- session_service/CLAUDE.md also needs updating 
+
+- direct_msg/main.py
+    - It's the general distributed-systems problem of "state lives on one specific node, but any node might need to act on it" — a WebSocket is inherently single-process (only the process that accepted the TCP connection can push bytes down it), but the system as a whole runs multiple processes with no built-in way to talk to each other about who's holding what.
+- direct_msg/requirements.txt:
+- docker-compose.yml - dependency on redis
+- updating direct_msg/CLAUDE.md's "Talks to" and "Env" sections:
 
 
 

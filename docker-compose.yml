@@ -65,8 +65,11 @@ services:
       # verify "file on disk matches DB row" from outside the container.
       - ./image_store:/app/image_store
 
-  # Swipe decisions + match detection. Trusts the gateway's X-User-Id header,
-  # same as profile-service/image-service. Owns the swipes/matches tables.
+  # Swipe decisions. Trusts the gateway's X-User-Id header, same as
+  # profile-service/image-service. Owns the swipes/matches tables (though as
+  # of Phase 1, matcher-consumer below is the one that writes matches — see
+  # matcher_service/main.py's record_swipe docstring). depends_on redpanda
+  # now too: every swipe publishes an event there.
   matcher-service:
     build: ./matcher_service
     environment:
@@ -74,8 +77,26 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redpanda:
+        condition: service_healthy
     expose:
       - "8004"
+
+  # Consumes the swipes topic and decides matches — see
+  # matcher_consumer/main.py's module docstring and CLAUDE.md for the full
+  # reasoning (Phase 1 of the production-scale plan). Not in gateway's
+  # routes: nothing calls this over HTTP except Prometheus scraping /metrics.
+  matcher-consumer:
+    build: ./matcher_consumer
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
+    depends_on:
+      db:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+    expose:
+      - "8009"
 
   # Candidate-feed queries for Discover. Read-only: reads profiles/swipes/
   # images directly from the shared DB (see recommendation_service/main.py's
@@ -92,12 +113,17 @@ services:
       - "8005"
 
   # Presence registry: tracks which users have a live chat WebSocket open
-  # right now. In-memory only, no DB — see session_service/main.py's module
-  # docstring for why this is its own service instead of living inside
-  # direct-msg. Not in gateway's routes: only direct-msg ever calls it,
-  # service-to-service.
+  # right now. Backed by Redis, not in-memory, as of Phase 2 of the
+  # production-scale plan — see session_service/main.py's module docstring
+  # for the full reasoning. Not in gateway's routes: only direct-msg ever
+  # calls it, service-to-service.
   session-service:
     build: ./session_service
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
     expose:
       - "8006"
 
@@ -105,6 +131,9 @@ services:
   # Calls auth-service, matcher-service, and session-service directly over
   # this network (see main.py's module docstring) rather than only reading
   # the shared DB, which is why it needs depends_on all three, not just db.
+  # Also depends on redis now (Phase 2): chat delivery fans out via Pub/Sub
+  # so messages cross replica boundaries — see main.py's module-level Redis
+  # comment for the full mechanism.
   direct-msg:
     build: ./direct_msg
     environment:
@@ -112,6 +141,7 @@ services:
       AUTH_SERVICE_URL: http://auth-service:8002
       MATCHER_SERVICE_URL: http://matcher-service:8004
       SESSION_SERVICE_URL: http://session-service:8006
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       db:
         condition: service_healthy
@@ -121,6 +151,8 @@ services:
         condition: service_started
       session-service:
         condition: service_started
+      redis:
+        condition: service_healthy
     expose:
       - "8007"
 
@@ -182,6 +214,111 @@ services:
       - "8008"
     volumes:
       - ./README.md:/app/README.md:ro
+
+  # Event broker for swipe routing (see matcher_service/main.py and the new
+  # matcher-consumer service for the full reasoning). Redpanda, not upstream
+  # Kafka: same wire protocol and client libraries, but a single binary with
+  # no separate ZooKeeper process to run — matters on a laptop. `rpk` below
+  # is Redpanda's own CLI, bundled in the image, used once at startup (see
+  # the `command`) to create the swipes topic with a fixed partition count.
+  redpanda:
+    image: redpandadata/redpanda:v24.2.10
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=512M
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    expose:
+      - "9092"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot job, not a long-running service: creates both topics this system
+  # uses, then exits. `swipes` gets 6 partitions (see matcher_service/main.py's
+  # docstring for why the partition count/key matter for consistent-hash
+  # routing); `matches` gets fewer (3) since match creation is inherently
+  # lower-volume than raw swipes (most swipes are one-directional, only a
+  # fraction become mutual). Separate from the redpanda container itself
+  # because rpk needs the broker already accepting connections first — this
+  # runs after redpanda's healthcheck passes, then `restart: "no"` means it
+  # never re-runs on subsequent `docker compose up`s (topics already exist).
+  redpanda-init:
+    image: redpandadata/redpanda:v24.2.10
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "rpk topic create swipes --partitions 6 --replicas 1 --brokers redpanda:9092 || true; rpk topic create matches --partitions 3 --replicas 1 --brokers redpanda:9092 || true"
+    restart: "no"
+
+  # Shared in-memory store for session_service (presence keys) and
+  # direct_msg (Pub/Sub chat fan-out across replicas) — see each service's
+  # own comments for the full reasoning (Phase 2 of the production-scale
+  # plan). No persistence configured: both use cases here are fine to lose
+  # on a restart (presence re-registers, chat history lives in Postgres/
+  # Cassandra, not Redis).
+  redis:
+    image: redis:7.4-alpine
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Postgres itself doesn't speak Prometheus's format — this sidecar queries
+  # it directly (pg_database_size, connection counts, etc.) and re-exposes
+  # the results as a normal /metrics endpoint, so it can be scraped exactly
+  # like every other service instead of needing a special case.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      DATA_SOURCE_NAME: postgresql://postgres:postgres@db:5432/tinder?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "9187"
+
+  # Scrapes /metrics off every instrumented service on a timer (see
+  # observability/prometheus.yml for the target list + why static_configs is
+  # the right tool for now). No depends_on: a scrape failing because a target
+  # isn't up yet just gets retried on the next interval, so there's nothing to
+  # wait on. Exposed to the host (9090) purely as a dev convenience, same
+  # reasoning as pgweb below — not something a real client ever reaches.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  # Dashboards on top of Prometheus. Datasource + dashboard-provider configs
+  # come from provisioning/ (auto-loaded on startup, see the files' own
+  # comments); the actual dashboard JSON is mounted separately at the path
+  # dashboards.yml's provider points to. Dev-only admin credentials — same
+  # spirit as JWT_SECRET's "dev only" comment elsewhere in this file.
+  grafana:
+    image: grafana/grafana:11.3.1
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
 
   # nginx: the only thing clients talk to. Routes + gates protected routes via
   # auth_request. Config is mounted (not baked) so edits don't need a rebuild.

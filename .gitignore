@@ -19,6 +19,12 @@ image_store/
 # Personal learning notes — not shipped documentation, stays local only.
 LEARNING.md
 
+# Production-scale rebuild plan (Kafka/Redis/Cassandra/S3/k8s/tracing) — a
+# working exploration doc for a big, not-yet-finalized pivot (gateway choice
+# still open), not settled documentation like humming-bubbling-valley.md.
+# Stays local only, same reasoning as LEARNING.md above.
+.claude/plans/cached-leaping-lovelace.md
+
 # Editor / OS noise
 .DS_Store
 .idea/

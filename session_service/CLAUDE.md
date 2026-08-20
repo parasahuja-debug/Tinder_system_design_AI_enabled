@@ -13,17 +13,22 @@ gateway, so there's no `X-User-Id`/`auth_request` model here.
 - `GET /health` → `{status: ok}`
 
 ## State
-In-memory `dict[user_id, connected_at]` — no database, no persistence.
-Doesn't survive a restart; acceptable because a restart just means every
-connected client reconnects and re-registers, same as any dropped connection.
+Redis keys (`presence:<user_id>` -> ISO timestamp), as of Phase 2 of the
+production-scale plan — moved off an in-memory dict specifically so presence
+is visible across replicas of this service, not trapped in whichever one
+happened to handle a given connect/disconnect call. No expiry set on the
+keys; a stale entry left behind by a direct_msg crash persists until the
+next disconnect call for that user, same tradeoff the old in-memory version
+had.
 
 ## Env
-None required — no `DATABASE_URL`, since this service has no tables.
+`REDIS_URL` (default `redis://redis:6379/0`). No `DATABASE_URL` — this
+service has no Postgres tables.
 
 ## Run standalone
 ```
 pip install -r requirements.txt
-uvicorn main:app --port 8006
+REDIS_URL=redis://localhost:6379/0 uvicorn main:app --port 8006
 curl -XPOST localhost:8006/session/connect -H 'content-type: application/json' -d '{"user_id":"test-user"}'
 curl localhost:8006/session/test-user
 ```

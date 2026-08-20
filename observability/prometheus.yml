@@ -1,0 +1,64 @@
+# Prometheus's own config, read once at container startup. Each scrape_config
+# below is a "job" — a named group of targets Prometheus polls on its own
+# schedule (see global.scrape_interval). Targets are internal compose
+# hostnames, same DNS every other service already uses to reach one another
+# (e.g. direct-msg -> session-service) — Prometheus is just another container
+# on this network. One job per service (not one shared job with 7 targets) so
+# every metric carries a clean job="<service>" label, keeping Grafana queries
+# like rate(http_requests_total{job="direct-msg"}[5m]) simple to write.
+#
+# Static targets only (not kubernetes_sd_configs / any dynamic discovery):
+# these 7 hostnames are fixed by docker-compose.yml and don't change at
+# runtime, so hand-listing them matches reality. This gets replaced with
+# real service discovery once the system runs on Kubernetes (see the
+# production-scale plan's Phase 6) — deliberately not over-built here.
+#
+# support-chatbot-service is NOT scraped: it was scoped out of Day 6's
+# instrumentation pass (its LangSmith traces already cover its LLM-facing
+# latency/call behavior).
+
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: auth-service
+    static_configs:
+      - targets: ["auth-service:8002"]
+
+  - job_name: profile-service
+    static_configs:
+      - targets: ["profile-service:8001"]
+
+  - job_name: image-service
+    static_configs:
+      - targets: ["image-service:8003"]
+
+  - job_name: matcher-service
+    static_configs:
+      - targets: ["matcher-service:8004"]
+
+  # New in Phase 1 of the production-scale plan — see matcher_consumer/
+  # CLAUDE.md. Only ever serves /metrics and /health; the real work is a
+  # background Kafka consumer thread, not HTTP traffic.
+  - job_name: matcher-consumer
+    static_configs:
+      - targets: ["matcher-consumer:8009"]
+
+  - job_name: recommendation-service
+    static_configs:
+      - targets: ["recommendation-service:8005"]
+
+  - job_name: session-service
+    static_configs:
+      - targets: ["session-service:8006"]
+
+  - job_name: direct-msg
+    static_configs:
+      - targets: ["direct-msg:8007"]
+
+  # Not one of our own services — a translator sidecar that queries Postgres
+  # directly and re-exposes pg_database_size etc. as scrapeable metrics (see
+  # its docker-compose.yml comment for why it exists at all).
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]

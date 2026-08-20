@@ -1,6 +1,7 @@
-# session_service runtime deps. No SQLAlchemy/psycopg2 here (unlike every
-# other service) because presence is intentionally in-memory only — see
-# main.py's module docstring for why persisting it isn't the point.
+# session_service runtime deps. Still no SQLAlchemy/psycopg2 (unlike most
+# other services) — presence lives in Redis, not Postgres, as of Phase 2 of
+# the production-scale plan (see main.py's module docstring).
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 prometheus-client==0.21.1 # /metrics endpoint for Prometheus scraping (Day 6)
+redis==5.2.1               # presence storage (Pub/Sub not used here — see direct_msg for that half)
