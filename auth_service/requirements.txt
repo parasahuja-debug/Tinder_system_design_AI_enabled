@@ -6,3 +6,6 @@ psycopg2-binary==2.9.10   # Postgres driver for SQLAlchemy
 pyjwt==2.10.1             # sign/verify the JWTs this service issues
 bcrypt==4.2.1             # password hashing (called directly, not via passlib)
 prometheus-client==0.21.1 # /metrics endpoint for Prometheus scraping (Day 6)
+opentelemetry-sdk==1.28.2                       # tracing core: creates/batches spans (Phase 5)
+opentelemetry-instrumentation-fastapi==0.49b2   # auto-generates a span for every route, no per-endpoint code
+opentelemetry-exporter-otlp-proto-grpc==1.28.2  # ships spans to the otel-collector over OTLP/gRPC

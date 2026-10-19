@@ -29,6 +29,7 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
       JWT_SECRET: dev-secret-change-me # dev only; a real deploy injects a real secret
+      OTEL_COLLECTOR_ENDPOINT: http://otel-collector:4317 # stated explicitly (Phase 5) rather than relying on main.py's default matching
     depends_on:
       db:
         condition: service_healthy
@@ -40,6 +41,7 @@ services:
     build: ./profile_service
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
+      OTEL_COLLECTOR_ENDPOINT: http://otel-collector:4317 # stated explicitly (Phase 5) rather than relying on main.py's default matching
     depends_on:
       db:
         condition: service_healthy
@@ -64,6 +66,7 @@ services:
       AWS_REGION: ${AWS_REGION}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME}
       CLOUDFRONT_DOMAIN: ${CLOUDFRONT_DOMAIN}
+      OTEL_COLLECTOR_ENDPOINT: http://otel-collector:4317 # stated explicitly (Phase 5) rather than relying on main.py's default matching
       # 2026-08-21 (Phase 4): replaced — local disk storage is gone. Kept
       # for history per standing rule:
       # IMAGE_STORE_DIR: /app/image_store
@@ -90,6 +93,7 @@ services:
     build: ./matcher_service
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
+      OTEL_COLLECTOR_ENDPOINT: http://otel-collector:4317 # stated explicitly (Phase 5) rather than relying on main.py's default matching
     depends_on:
       db:
         condition: service_healthy
@@ -106,6 +110,7 @@ services:
     build: ./matcher_consumer
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
+      OTEL_COLLECTOR_ENDPOINT: http://otel-collector:4317 # stated explicitly (Phase 5) rather than relying on main.py's default matching
     depends_on:
       db:
         condition: service_healthy
@@ -122,6 +127,7 @@ services:
     build: ./recommendation_service
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/tinder
+      OTEL_COLLECTOR_ENDPOINT: http://otel-collector:4317 # stated explicitly (Phase 5) rather than relying on main.py's default matching
     depends_on:
       db:
         condition: service_healthy
@@ -137,6 +143,7 @@ services:
     build: ./session_service
     environment:
       REDIS_URL: redis://redis:6379/0
+      OTEL_COLLECTOR_ENDPOINT: http://otel-collector:4317 # stated explicitly (Phase 5) rather than relying on main.py's default matching
     depends_on:
       redis:
         condition: service_healthy
@@ -161,6 +168,7 @@ services:
       SESSION_SERVICE_URL: http://session-service:8006
       REDIS_URL: redis://redis:6379/0
       CASSANDRA_HOSTS: cassandra
+      OTEL_COLLECTOR_ENDPOINT: http://otel-collector:4317 # stated explicitly (Phase 5) rather than relying on main.py's default matching
     depends_on:
       auth-service:
         condition: service_started
@@ -278,6 +286,41 @@ services:
       - "rpk topic create swipes --partitions 6 --replicas 1 --brokers redpanda:9092 || true; rpk topic create matches --partitions 3 --replicas 1 --brokers redpanda:9092 || true"
     restart: "no"
 
+  # Phase 5: same "one-off job, not a service" shape as redpanda-init above
+  # — creates Jaeger's keyspace/tables in our existing Cassandra cluster,
+  # then exits for good. Runs once Cassandra's healthcheck passes; jaeger
+  # itself (next piece) depends on this job finishing before it starts.
+  jaeger-schema:
+    image: jaegertracing/jaeger-cassandra-schema:1.62.0
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    environment:
+      CQLSH_HOST: cassandra
+      MODE: test # single-node dev cluster — matches "replicas 1" everywhere else here, not a real multi-DC prod topology
+      KEYSPACE: jaeger_v1_dc1 # stated explicitly (not left to this image's default) so the jaeger container's CASSANDRA_KEYSPACE is guaranteed to match
+    restart: "no"
+
+  # Phase 5: Jaeger's own dedicated trace UI (separate from Grafana/Tempo
+  # above) — same trace data, a different front end to browse it in.
+  # Storage is the existing Cassandra cluster (jaeger-schema's keyspace),
+  # not the all-in-one image's default in-memory store, so trace history
+  # survives a restart. The OTLP receiver here is what the Collector's
+  # otlp/jaeger exporter actually sends to.
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    depends_on:
+      jaeger-schema:
+        condition: service_completed_successfully
+    environment:
+      SPAN_STORAGE_TYPE: cassandra
+      CASSANDRA_SERVERS: cassandra
+      CASSANDRA_KEYSPACE: jaeger_v1_dc1
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # the actual Jaeger UI, open this in a browser
+      - "4319:4317" # OTLP gRPC, remapped on the host side since 4317 is already taken by otel-collector's own mapping
+
   # Shared in-memory store for session_service (presence keys) and
   # direct_msg (Pub/Sub chat fan-out across replicas) — see each service's
   # own comments for the full reasoning (Phase 2 of the production-scale
@@ -383,6 +426,40 @@ services:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "9090:9090"
+
+  # Phase 5: the single place every service's OpenTelemetry SDK sends spans
+  # to — fans them out to Tempo and Jaeger per observability/
+  # otel-collector-config.yaml. The -contrib image reads its config from
+  # /etc/otelcol-contrib/config.yaml by default, so mounting it there is
+  # enough — no command override needed. Both ports exposed to the host too
+  # (not just internal), so you can curl/debug the Collector directly.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC — what every service's SDK will actually use
+      - "4318:4318" # OTLP HTTP — fallback
+
+  # Phase 5: trace storage/query backend, becomes a Grafana datasource in a
+  # later piece. Reuses image-service's own S3 bucket + credentials (under
+  # tempo.yaml's "traces" prefix) rather than a new bucket — same env vars,
+  # just also handed to this container. -config.expand-env=true is what
+  # actually substitutes the ${AWS_...} placeholders in tempo.yaml with
+  # these real values at startup; without it Tempo would try to reach a
+  # bucket literally named "${S3_BUCKET_NAME}".
+  tempo:
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo.yaml", "-config.expand-env=true"]
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+    ports:
+      - "3200:3200" # Tempo's own HTTP API — Grafana queries it here, you can curl it too
 
   # Dashboards on top of Prometheus. Datasource + dashboard-provider configs
   # come from provisioning/ (auto-loaded on startup, see the files' own

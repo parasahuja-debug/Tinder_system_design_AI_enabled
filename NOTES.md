@@ -381,8 +381,29 @@ mem0 fetching -
 - requirements-txt boto3
 - docker-compose.yml - env variable for aws
 
+-------------
+phase5 -
+
+create - otel-collector-config.yaml (opentelemetry raegar/Tempo)
+    receivers receives the traces - internall paas to exporters which pass it to Tempo and JAegar (all through OLTP)
+
+add in  docker-compose.yml
+
+create - tempo.yaml
+    this is Tempo's own inbound door, accepting OTLP from the Collector's otlp/tempo exporter.
+
+wiring tempo in docker-compose.yml
+
+jaeger-schema in docker-compose.yml
+
+add opentelemetry in all services for enabling tracing.
+OTEL_COLLECTOR_ENDPOINT env var to each of their docker-compose.yml - all services
 
 
+edit and add tempo in 
+    observability/grafana/provisioning/datasources/datasource.yml
+
+-----
 
 
 

@@ -40,9 +40,44 @@ import time
 from fastapi import FastAPI, Request, Response
 from pydantic import BaseModel
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+# Phase 5: distributed tracing. These four trace every request in and out of
+# this service (not just counting/timing it, like the Prometheus imports
+# above do) and ship each one to the otel-collector, which fans it out to
+# both Tempo and Jaeger — so a single request's path through this service,
+# and later across other services too, becomes visible in both UIs.
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 import redis
 
 app = FastAPI(title="session_service")
+
+# --- Observability (Phase 5): distributed tracing ---------------------------
+# Resource.create({"service.name": ...}) is the tracing equivalent of
+# Prometheus's job="session-service" label below — without it, every span
+# this service produces would show up in Tempo/Jaeger as an anonymous blob
+# with no indication of which service it came from.
+# BatchSpanProcessor batches multiple spans into one network call to the
+# collector rather than sending each span as its own round-trip
+# (SimpleSpanProcessor would do that instead) — standard choice outside of
+# active low-level debugging, since per-span network calls add real overhead
+# for no benefit here. insecure=True: no TLS on this internal compose
+# network, same reasoning as the collector's own exporters.
+OTEL_COLLECTOR_ENDPOINT = os.environ.get("OTEL_COLLECTOR_ENDPOINT", "http://otel-collector:4317")
+trace.set_tracer_provider(TracerProvider(resource=Resource.create({"service.name": "session-service"})))
+trace.get_tracer_provider().add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter(endpoint=OTEL_COLLECTOR_ENDPOINT, insecure=True))
+)
+# This is what actually turns the setup above into real spans: patches this
+# app instance so every route gets a span automatically, no per-endpoint
+# code needed — same "write it once" idea as the Prometheus middleware
+# below. excluded_urls skips /metrics and /health: pure polling traffic
+# (Prometheus scrapes /metrics every 15s) with nothing worth tracing, and
+# tracing it anyway would just be extra span volume for zero insight.
+FastAPIInstrumentor.instrument_app(app, excluded_urls="/metrics,/health")
 
 # --- Observability (Day 6): generic request metrics, same pattern as every
 # other service in this repo (see auth_service/main.py for the full walk-

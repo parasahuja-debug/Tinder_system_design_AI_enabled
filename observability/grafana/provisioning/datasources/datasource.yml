@@ -10,3 +10,12 @@ datasources:
     access: proxy # Grafana's backend calls Prometheus server-side, not the browser directly
     url: http://prometheus:9090
     isDefault: true
+  # Phase 5: Tempo as a second datasource — same auto-provisioning as
+  # Prometheus above, so traces show up inside this same Grafana instead of
+  # needing a separate tool to view. type: tempo is Grafana's built-in
+  # Tempo datasource plugin (not the generic "http" type) — it's what
+  # renders trace waterfalls/search in the UI, not just raw JSON.
+  - name: Tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200

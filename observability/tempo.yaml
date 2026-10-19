@@ -1,0 +1,41 @@
+# Phase 5: Tempo is the trace storage/query backend that plugs into Grafana
+# as a datasource. server: is plain boilerplate (Tempo's own HTTP API
+# address, used by Grafana to query it and by us to curl it directly).
+# distributor.receivers: the same "receivers" concept as the Collector's own
+# config — Tempo's inbound door, accepting OTLP spans forwarded by the
+# Collector's otlp/tempo exporter. Nothing about storage yet, that's next.
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+        http:
+
+# storage.trace: where ingested spans actually get written. Reusing the same
+# bucket + credentials image_service already has (via ${VAR} env-var
+# expansion — the tempo binary is started with -config.expand-env=true, same
+# "credentials via env, never hardcoded" convention as every other service
+# here), but under its own prefix so Tempo's objects never collide with
+# image_service's own {user_id}/{image_id}.ext keys in that same bucket.
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: ${S3_BUCKET_NAME}
+      endpoint: s3.${AWS_REGION}.amazonaws.com
+      region: ${AWS_REGION}
+      access_key: ${AWS_ACCESS_KEY_ID}
+      secret_key: ${AWS_SECRET_ACCESS_KEY}
+      prefix: traces
+
+# compactor.compaction.block_retention: the actual budget-safety mechanism —
+# Tempo runs a background compactor that deletes any trace block older than
+# this. 48h means the traces/ prefix in S3 has a hard ceiling on how much it
+# can ever hold, no matter how long the stack stays running — it never
+# silently accumulates into a real storage bill.
+compactor:
+  compaction:
+    block_retention: 48h

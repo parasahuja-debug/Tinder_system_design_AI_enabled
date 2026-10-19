@@ -41,6 +41,22 @@ import uuid
 from confluent_kafka import Consumer, Producer
 from fastapi import FastAPI, Request, Response
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+# Phase 5: distributed tracing. These four trace every request in and out of
+# this service (not just counting/timing it, like the Prometheus imports
+# above do) and ship each one to the otel-collector, which fans it out to
+# both Tempo and Jaeger. Note: this only ever traces this service's /health
+# route — the actual interesting work here (the Kafka consume loop) isn't
+# an HTTP route, so FastAPIInstrumentor can't see it. Tracing the real
+# swipe -> Redpanda -> this-consumer hop as one connected trace needs
+# separate work (propagating trace context through the Kafka message
+# itself), not done here — this is just the same boilerplate every other
+# service gets.
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from sqlalchemy import Column, DateTime, String, UniqueConstraint, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.sql import func
@@ -86,6 +102,33 @@ class Match(Base):
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="matcher_consumer")
+
+# --- Observability (Phase 5): distributed tracing ---------------------------
+# Resource.create({"service.name": ...}) is the tracing equivalent of
+# Prometheus's job="matcher-consumer" label below — without it, every span
+# this service produces would show up in Tempo/Jaeger as an anonymous blob
+# with no indication of which service it came from.
+# BatchSpanProcessor batches multiple spans into one network call to the
+# collector rather than sending each span as its own round-trip
+# (SimpleSpanProcessor would do that instead) — standard choice outside of
+# active low-level debugging, since per-span network calls add real overhead
+# for no benefit here. insecure=True: no TLS on this internal compose
+# network, same reasoning as the collector's own exporters.
+OTEL_COLLECTOR_ENDPOINT = os.environ.get("OTEL_COLLECTOR_ENDPOINT", "http://otel-collector:4317")
+trace.set_tracer_provider(TracerProvider(resource=Resource.create({"service.name": "matcher-consumer"})))
+trace.get_tracer_provider().add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter(endpoint=OTEL_COLLECTOR_ENDPOINT, insecure=True))
+)
+# This is what actually turns the setup above into real spans: patches this
+# app instance so every route gets a span automatically, no per-endpoint
+# code needed — same "write it once" idea as the Prometheus middleware
+# below. excluded_urls skips /metrics and /health: pure polling traffic
+# with nothing worth tracing. As the import comment above already flagged,
+# this app only ever serves /metrics and /health anyway — the real work
+# (consume_loop) is a background thread, not an HTTP route, so this piece
+# ends up tracing almost nothing here. Kept for consistency with every
+# other service, not because it earns its keep in this one yet.
+FastAPIInstrumentor.instrument_app(app, excluded_urls="/metrics,/health")
 
 # --- Observability: generic request metrics, same pattern as every other
 # service (see auth_service/main.py) — this app only ever serves /metrics

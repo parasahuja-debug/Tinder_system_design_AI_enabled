@@ -1,0 +1,42 @@
+# Phase 5: every service sends its spans here over OTLP — this file is the
+# only place that knows where traces end up, so adding/swapping a trace
+# backend later means editing this file, not touching any service's code.
+#
+# receivers: the Collector's inbound door — what it listens for and accepts
+# incoming spans on. The senders are each service's OpenTelemetry SDK (wired
+# up in a later piece); nothing is routed onward yet, that's the exporters
+# section, added next.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+# exporters: the Collector's outbound side — where whatever came in through
+# receivers gets forwarded. Both speak OTLP (Tempo and modern Jaeger both
+# ingest it natively, no translation needed), just pointed at two different
+# container hostnames. insecure: true is fine here — this is a container-to-
+# container hop on our own private compose network, not public traffic.
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+# service.pipelines: the actual wiring between the two sections above —
+# without this, receivers and exporters are just two unconnected lists, and
+# nothing would flow between them. "traces" names this pipeline (the
+# Collector can run separate pipelines for metrics/logs too, unused here)
+# and says: everything that arrives via the otlp receiver goes out through
+# BOTH exporters — this one line is the actual fan-out.
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlp/tempo, otlp/jaeger]
