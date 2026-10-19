@@ -79,6 +79,18 @@ MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
 # local build, not a substitute for content validation in production.
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
+# Maps each allowed extension to the MIME type S3/CloudFront should serve it
+# as. Derived from ext (already validated above) rather than trusting the
+# client-supplied upload's content_type header directly, which can be
+# missing or wrong depending on what sent the request.
+CONTENT_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
 
@@ -253,7 +265,9 @@ def upload_image(file: UploadFile = File(...), x_user_id: str = Header(default=N
         # — no functional reason it has to match, just keeps the mental model
         # consistent with what this service already did.
         s3_key = f"{user_id}/{image_id}{ext}"
-        s3_client.put_object(Bucket=S3_BUCKET_NAME, Key=s3_key, Body=contents)
+        s3_client.put_object(
+            Bucket=S3_BUCKET_NAME, Key=s3_key, Body=contents, ContentType=CONTENT_TYPES[ext]
+        )
 
         try:
             new_image = Image(

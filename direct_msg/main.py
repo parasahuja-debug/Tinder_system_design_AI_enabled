@@ -507,7 +507,7 @@ async def chat(websocket: WebSocket, match_id: str):
             # anywhere), this is a no-op broadcast with no listener — same
             # "they'll see it via /chat/history next visit, just not live"
             # fallback as before, still true since the message already
-            # landed in Postgres above regardless.
+            # landed in Cassandra above regardless.
             await redis_client.publish(f"chat:{other_user_id}", json.dumps(payload))
     except WebSocketDisconnect:
         # Normal end-of-life for a chat session (tab closed, navigated away,
