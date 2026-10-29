@@ -1,0 +1,13 @@
+# Non-secret env vars for auth-service — mirrors what's currently inline
+# under docker-compose.yml's auth-service.environment: block, minus
+# JWT_SECRET (that one goes in secret.yaml instead, next piece).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-service-config
+  namespace: tinder
+data:
+  DATABASE_URL: "postgresql://postgres:postgres@db:5432/tinder"
+  JWT_ALGORITHM: "HS256"
+  JWT_EXPIRE_MINUTES: "1440"
+  OTEL_COLLECTOR_ENDPOINT: "http://otel-collector:4317"

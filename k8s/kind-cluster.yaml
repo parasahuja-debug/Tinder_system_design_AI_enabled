@@ -1,0 +1,40 @@
+# kind reads this to decide what Docker containers to create as this
+# cluster's "nodes" — each one runs the real Kubernetes node software
+# (kubelet, container runtime), not a simulation. One control-plane node
+# (the API server/scheduler/etcd — the cluster's brain) plus two worker
+# nodes (where pods actually run) is the minimum that makes "multi-node"
+# real: with only one worker, running 2+ replicas of a service would be
+# meaningless — they'd have nowhere else to land anyway. Phase 6 of the
+# production-scale plan needs genuine multi-node scheduling to actually
+# prove Phase 1's consistent hashing and Phase 2's Redis pub/sub work
+# across replicas on different nodes, not just on paper.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  # The control-plane node is also the one node we mark "ingress-ready" and
+  # punch host ports through to — kind's own documented pattern for letting
+  # an ingress controller (Traefik, once installed) actually be reachable
+  # from outside the cluster. Without this, the cluster is fully isolated
+  # inside Docker's network and nothing on the host machine could reach it.
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    # 2026-10-28: switched containerPort to Traefik's own real default
+    # listening ports (8000/8443) instead of making Traefik listen on
+    # 80/443 to match these. Confirmed both directions work — this is the
+    # fix we're keeping. hostPort stays 80/443 regardless: that number is
+    # just what you type into your browser on your Mac, independent of
+    # whatever Traefik actually listens on inside the container.
+    extraPortMappings:
+      - containerPort: 8000
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 8443
+        hostPort: 443
+        protocol: TCP
+  - role: worker
+  - role: worker

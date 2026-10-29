@@ -1,0 +1,18 @@
+# Gives auth-service a stable internal name/IP other pods can reach it at
+# (auth-service.tinder.svc.cluster.local, or just "auth-service" from
+# within the same namespace) — same role docker-compose's built-in DNS
+# already plays when a service calls http://auth-service:8002 today.
+# ClusterIP (the default): internal-only, nothing outside the cluster
+# reaches this directly — only Traefik, once we write its IngressRoute,
+# gets a path in from outside.
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: tinder
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - port: 8002
+      targetPort: 8002

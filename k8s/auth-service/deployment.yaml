@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: tinder
+spec:
+  replicas: 1 # single instance for now — the multi-replica proof this phase cares about is matcher-consumer/direct-msg, not this one
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          # KIND-SPECIFIC SPOT (flagged per the cloud-portability plan): no
+          # real image registry here — `tinder-auth-service:latest` only
+          # exists because we loaded it directly into this kind cluster's
+          # nodes via `kind load docker-image`. On a real cloud move, this
+          # becomes a registry URL instead (e.g. an ECR/ACR/GCR path) and
+          # imagePullPolicy goes back to the default (Always) once there's
+          # a real registry to pull a fresh tag from.
+          image: tinder-auth-service:latest
+          imagePullPolicy: IfNotPresent # don't try to pull :latest from a real registry — it doesn't exist there
+          ports:
+            - containerPort: 8002
+          envFrom:
+            - configMapRef:
+                name: auth-service-config
+            - secretRef:
+                name: auth-service-secret
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 10

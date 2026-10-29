@@ -1,0 +1,8 @@
+# A dedicated namespace for the app's own services (auth-service,
+# profile-service, etc.) — kept separate from Traefik's own `traefik`
+# namespace, same reasoning as giving Traefik its own namespace earlier:
+# infra/gateway concerns stay apart from application workloads.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tinder

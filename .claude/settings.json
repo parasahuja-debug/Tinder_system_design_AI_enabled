@@ -1,5 +1,5 @@
 {
-  "//": "Project-scoped Claude Code settings. The PostToolUse hook runs a fast syntax check on any .py file right after Claude edits/writes it, so mistakes surface immediately in-session rather than at docker-compose-up. The PreToolUse hook blocks Read/Bash from reaching .env (real secrets) while leaving .env.example untouched. Dev-time only; neither runs when the app serves traffic.",
+  "//": "Project-scoped Claude Code settings. The PostToolUse hook runs a fast syntax check on any .py file right after Claude edits/writes it, so mistakes surface immediately in-session rather than at docker-compose-up. The first PreToolUse hook blocks Read/Bash from reaching .env (real secrets) while leaving .env.example untouched. The second logs every Bash command (+ why it was run) to a gitignored local file. Dev-time only; none of this runs when the app serves traffic.",
   "hooks": {
     "PreToolUse": [
       {
@@ -17,6 +17,10 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block_env.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log_bash_commands.sh\""
           }
         ]
       }
