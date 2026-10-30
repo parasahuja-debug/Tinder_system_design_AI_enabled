@@ -1,0 +1,95 @@
+# StatefulSets live in a different API group than plain Secrets/Services
+# ("apps/v1" instead of bare "v1") — same idea as Deployment did for
+# auth-service, StatefulSet is just another member of that same group.
+apiVersion: apps/v1
+# The object type — StatefulSet specifically, chosen (over Deployment)
+# because Postgres's data must survive a pod restart; see the explanation
+# given right before this file was written.
+kind: StatefulSet
+metadata:
+  # The name this object is known by inside the cluster.
+  name: postgres
+  # Same "tinder" folder as everything else in this app.
+  namespace: tinder
+spec:
+  # StatefulSets require naming a "governing Service" that manages network
+  # identity for their pods — this points at the Service we're about to
+  # write next (named "db", matching the hostname every other service
+  # already expects in its DATABASE_URL).
+  serviceName: db
+  # Only one Postgres instance. Unlike matcher-consumer/direct-msg later,
+  # we are not trying to prove multi-replica behavior for the database
+  # itself — one real, persistent copy is the goal here.
+  replicas: 1
+  # How this StatefulSet recognizes which running pods belong to it —
+  # by matching this label.
+  selector:
+    matchLabels:
+      app: postgres
+  # The actual pod template: what to run, and what label to stamp on it
+  # (matching the selector above).
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        # A name for this container within the pod (a pod can hold more
+        # than one container; ours only needs this one).
+        - name: postgres
+          # Same exact image docker-compose.yml already uses — Postgres 16
+          # with the pgvector extension built in (needed elsewhere in this
+          # repo, e.g. mem0's embedding storage).
+          image: pgvector/pgvector:pg16
+          ports:
+            # Documents which port Postgres listens on inside the
+            # container — this alone doesn't open anything by itself, it's
+            # informational for other objects that reference it.
+            - containerPort: 5432
+          # Pulls in all three values from postgres-secret at once (same
+          # envFrom pattern already used for auth-service's ConfigMap/
+          # Secret) — POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.
+          envFrom:
+            - secretRef:
+                name: postgres-secret
+          volumeMounts:
+            # Attaches the persistent volume (defined below, under
+            # volumeClaimTemplates) to this exact path inside the
+            # container — the real directory Postgres actually writes its
+            # data files to.
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            # Same tool docker-compose's own healthcheck already uses to
+            # ask Postgres "are you actually ready for connections yet" —
+            # not just "is the process running."
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  # THE part that makes this a StatefulSet rather than a Deployment: for
+  # each replica, Kubernetes automatically creates a real
+  # PersistentVolumeClaim (an actual request for real disk space) using
+  # this template. Unlike a Deployment's storage, this volume is NOT
+  # deleted when the pod is deleted — it reattaches to whatever
+  # replacement pod comes next, which is exactly how Postgres's data
+  # survives a restart.
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        # Only one pod can mount this volume at a time — perfectly fine
+        # since we only ever run one Postgres replica anyway.
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            # A small amount, deliberately — this is a dev build, not
+            # real production data volume.
+            storage: 1Gi
+        # Deliberately NOT specifying storageClassName here: leaving it
+        # unset means "use whatever this cluster's default storage class
+        # is." kind sets one up automatically, and so does every real
+        # cloud (EKS/AKS/GKE each mark their own as default) — so this
+        # turns out to be the MORE portable choice, not a kind-specific
+        # one: the same file works unchanged on a real cloud later,
+        # because we never hardcoded kind's own storage class name here.

@@ -408,6 +408,16 @@ Each backend service keeps its own lean `CLAUDE.md`.
 - Finalize `README.md`: architecture overview, setup/run instructions, every
   service described, how to use the chatbot, how to read the dashboards —
   entirely first-principles reasoning, no external attribution.
+- **Added (2026-10-30), if feasible:** RBAC (role-based access control) for
+  the Kubernetes cluster's `Secret` objects — restricting which pods/
+  service-accounts can actually read a Secret inside the running cluster,
+  not just keeping the credential values out of git (`k8s/**/secret.yaml`
+  already got the `.env`/`.env.example` gitignore treatment during Phase 6
+  of the rebuild plan — that only solves "don't commit this," not "who
+  inside the cluster can read it once it exists"). Deferred to here
+  rather than done per-service as each one gets its k8s manifests, since
+  RBAC is a cluster-wide policy decision, better applied once after every
+  service exists rather than piecemeal.
 - Write a **Day 10+ backlog**: real sharded/Cassandra recommendation engine,
   MinIO/S3 for images, JWT refresh + hardening, per-service databases,
   <!-- 2026-08-09: removed from backlog — "live-DB tool access for the chatbot

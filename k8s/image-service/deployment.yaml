@@ -1,0 +1,40 @@
+# Same shape as k8s/auth-service/deployment.yaml. Differences: envFrom
+# references BOTH a ConfigMap and a Secret (the AWS credentials), and the
+# probe path is /metrics (image_service has no /health route either —
+# confirmed by reading its main.py).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: image-service
+  namespace: tinder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: image-service
+  template:
+    metadata:
+      labels:
+        app: image-service
+    spec:
+      containers:
+        - name: image-service
+          image: tinder-image-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8003
+          envFrom:
+            - configMapRef:
+                name: image-service-config
+            - secretRef:
+                name: image-service-secret
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: 8003
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: 8003
+            initialDelaySeconds: 10

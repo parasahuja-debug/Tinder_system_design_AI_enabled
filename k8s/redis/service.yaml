@@ -1,0 +1,13 @@
+# Same shape as auth-service/service.yaml. Named "redis" to match every
+# service's existing REDIS_URL (redis://redis:6379/0).
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: tinder
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

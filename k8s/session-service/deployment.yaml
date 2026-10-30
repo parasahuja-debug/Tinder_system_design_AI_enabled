@@ -1,0 +1,36 @@
+# This one DOES have a real /health route (confirmed), unlike the four
+# services above that fell back to /metrics for their probes.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: session-service
+  namespace: tinder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: session-service
+  template:
+    metadata:
+      labels:
+        app: session-service
+    spec:
+      containers:
+        - name: session-service
+          image: tinder-session-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8006
+          envFrom:
+            - configMapRef:
+                name: session-service-config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8006
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8006
+            initialDelaySeconds: 10

@@ -1,0 +1,12 @@
+# Same shape as k8s/auth-service/configmap.yaml — see that file for what
+# every field means. Nothing here differs except the actual values:
+# profile-service has no JWT_SECRET at all (it never handles tokens), so
+# there's no accompanying secret.yaml for this service.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: profile-service-config
+  namespace: tinder
+data:
+  DATABASE_URL: "postgresql://postgres:postgres@db:5432/tinder"
+  OTEL_COLLECTOR_ENDPOINT: "http://otel-collector:4317"

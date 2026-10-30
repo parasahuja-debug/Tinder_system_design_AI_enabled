@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: session-service
+  namespace: tinder
+spec:
+  selector:
+    app: session-service
+  ports:
+    - port: 8006
+      targetPort: 8006

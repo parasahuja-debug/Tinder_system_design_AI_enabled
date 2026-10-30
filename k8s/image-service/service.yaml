@@ -1,0 +1,12 @@
+# Same shape as k8s/auth-service/service.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: image-service
+  namespace: tinder
+spec:
+  selector:
+    app: image-service
+  ports:
+    - port: 8003
+      targetPort: 8003

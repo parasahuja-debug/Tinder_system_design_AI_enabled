@@ -1,0 +1,39 @@
+# Same shape as k8s/auth-service/deployment.yaml. Probe path is /metrics
+# (no /health route here either). Note: this service will crash-loop until
+# redpanda is also deployed (next pieces) — same honest "it crashes until
+# its real dependency exists" pattern we already saw with auth-service and
+# Postgres, not something to pre-fix before it's actually proven.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: matcher-service
+  namespace: tinder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: matcher-service
+  template:
+    metadata:
+      labels:
+        app: matcher-service
+    spec:
+      containers:
+        - name: matcher-service
+          image: tinder-matcher-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8004
+          envFrom:
+            - configMapRef:
+                name: matcher-service-config
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: 8004
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: 8004
+            initialDelaySeconds: 10

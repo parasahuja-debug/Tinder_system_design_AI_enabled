@@ -1,0 +1,15 @@
+# Same shape as k8s/auth-service/configmap.yaml. Only the AWS credential
+# values (genuinely secret) live in secret.yaml instead — everything here
+# is non-sensitive, same split logic as JWT_SECRET vs. everything else.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: image-service-config
+  namespace: tinder
+data:
+  DATABASE_URL: "postgresql://postgres:postgres@db:5432/tinder"
+  OTEL_COLLECTOR_ENDPOINT: "http://otel-collector:4317"
+# AWS_REGION moved to secret.yaml instead, even though a region name isn't
+# truly sensitive — grouped with the real AWS credentials so there's one
+# single place to fill in all the AWS-related values, rather than
+# guessing a real region in this committed file.

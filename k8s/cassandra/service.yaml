@@ -1,0 +1,13 @@
+# Same shape as k8s/postgres/service.yaml. Named "cassandra" to match
+# direct_msg's existing CASSANDRA_HOSTS env var value.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cassandra
+  namespace: tinder
+spec:
+  selector:
+    app: cassandra
+  ports:
+    - port: 9042
+      targetPort: 9042

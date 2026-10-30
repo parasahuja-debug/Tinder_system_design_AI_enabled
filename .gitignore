@@ -35,6 +35,12 @@ LEARNING.md
 # clones this repo. Local only.
 scripts/setup-aws-phase4.sh
 
+# Phase 6 k8s Secret manifests hold real (even if dev-only) credential
+# values in plain text — same reasoning as .env above. Each one ships a
+# committed k8s/**/secret.yaml.example template instead; copy it to
+# secret.yaml and fill in real values, same workflow as .env.example.
+k8s/**/secret.yaml
+
 # Editor / OS noise
 .DS_Store
 .idea/

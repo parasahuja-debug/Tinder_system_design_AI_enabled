@@ -1,0 +1,39 @@
+# Has a real /health route, but — per matcher_consumer/CLAUDE.md — that
+# route does NOT reflect the actual background Kafka-consumer thread's
+# health, only whether the FastAPI app itself is up. Worth knowing as a
+# real limitation of this probe, not something to silently assume covers
+# more than it does.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: matcher-consumer
+  namespace: tinder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: matcher-consumer
+  template:
+    metadata:
+      labels:
+        app: matcher-consumer
+    spec:
+      containers:
+        - name: matcher-consumer
+          image: tinder-matcher-consumer:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8009
+          envFrom:
+            - configMapRef:
+                name: matcher-consumer-config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8009
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8009
+            initialDelaySeconds: 10

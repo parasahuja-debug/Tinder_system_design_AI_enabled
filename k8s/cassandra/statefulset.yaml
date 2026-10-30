@@ -1,0 +1,60 @@
+# StatefulSet — same reasoning as k8s/postgres/statefulset.yaml: Cassandra
+# genuinely persists data to disk (docker-compose.yml's own comment notes
+# a real bug once lost from forgetting this), so its storage must survive
+# a pod restart. One difference worth flagging: docker-compose's Cassandra
+# also joins a second network (cassandra_net) with a static IP, purely so
+# cassandra-web (a dev-only browser UI) could reach it reliably — that
+# workaround doesn't exist in Kubernetes because every Service already
+# gets a stable DNS name by default, so there's nothing to replicate here.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cassandra
+  namespace: tinder
+spec:
+  serviceName: cassandra
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cassandra
+  template:
+    metadata:
+      labels:
+        app: cassandra
+    spec:
+      containers:
+        - name: cassandra
+          image: cassandra:4.1
+          ports:
+            - containerPort: 9042
+          volumeMounts:
+            - name: cassandra-data
+              mountPath: /var/lib/cassandra
+          readinessProbe:
+            # Same check docker-compose's healthcheck uses. Generous
+            # delays/retries here on purpose — Cassandra's JVM startup is
+            # noticeably slower than Postgres's, same note already made
+            # in docker-compose.yml's own comment.
+            exec:
+              command: ["sh", "-c", "cqlsh -e 'describe cluster'"]
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "cqlsh -e 'describe cluster'"]
+            initialDelaySeconds: 90
+            periodSeconds: 15
+            failureThreshold: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: cassandra-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+        # storageClassName deliberately omitted — same portability
+        # reasoning as postgres/statefulset.yaml: defaults to whatever
+        # this cluster's default storage class is, on kind or a real
+        # cloud equally.

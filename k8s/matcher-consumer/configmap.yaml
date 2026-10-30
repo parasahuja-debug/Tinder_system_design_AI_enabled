@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: matcher-consumer-config
+  namespace: tinder
+data:
+  DATABASE_URL: "postgresql://postgres:postgres@db:5432/tinder"
+  OTEL_COLLECTOR_ENDPOINT: "http://otel-collector:4317"

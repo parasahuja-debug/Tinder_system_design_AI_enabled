@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: direct-msg
+  namespace: tinder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: direct-msg
+  template:
+    metadata:
+      labels:
+        app: direct-msg
+    spec:
+      containers:
+        - name: direct-msg
+          image: tinder-direct-msg:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8007
+          envFrom:
+            - configMapRef:
+                name: direct-msg-config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8007
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8007
+            initialDelaySeconds: 10

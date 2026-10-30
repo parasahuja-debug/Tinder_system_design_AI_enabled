@@ -1,5 +1,5 @@
 {
-  "//": "Project-scoped Claude Code settings. The PostToolUse hook runs a fast syntax check on any .py file right after Claude edits/writes it, so mistakes surface immediately in-session rather than at docker-compose-up. The first PreToolUse hook blocks Read/Bash from reaching .env (real secrets) while leaving .env.example untouched. The second logs every Bash command (+ why it was run) to a gitignored local file. Dev-time only; none of this runs when the app serves traffic.",
+  "//": "Project-scoped Claude Code settings. The PostToolUse hook runs a fast syntax check on any .py file right after Claude edits/writes it, so mistakes surface immediately in-session rather than at docker-compose-up. The first PreToolUse hook blocks Read/Bash from reaching real secret files (.env, and any k8s Secret manifest literally named secret.yaml) while leaving each one's .example template untouched. The second logs every Bash command (+ why it was run) to a gitignored local file. Dev-time only; none of this runs when the app serves traffic.",
   "hooks": {
     "PreToolUse": [
       {

@@ -1,0 +1,25 @@
+# The stable API shape this file follows.
+apiVersion: v1
+# A Service specifically — same role as auth-service's own Service file:
+# a stable address other pods can reach this one at.
+kind: Service
+metadata:
+  # Named "db" on purpose — this is the exact hostname auth_service (and
+  # every other service's) DATABASE_URL already expects
+  # (postgresql://postgres:postgres@db:5432/tinder). Matching it exactly
+  # means nothing in any service's existing config needs to change.
+  name: db
+  # Same "tinder" folder as everything else.
+  namespace: tinder
+spec:
+  # Which pods this Service actually forwards traffic to — anything
+  # carrying the label app: postgres, which is exactly what the
+  # StatefulSet's pod template stamps onto its one pod.
+  selector:
+    app: postgres
+  ports:
+    # port: what other pods connect to on this Service's own address.
+    # targetPort: which port on the actual pod that traffic gets forwarded
+    # to. Both 5432 here, matching Postgres's real listening port.
+    - port: 5432
+      targetPort: 5432

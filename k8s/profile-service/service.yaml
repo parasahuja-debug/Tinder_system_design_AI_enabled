@@ -1,0 +1,14 @@
+# Same shape as k8s/auth-service/service.yaml — see that file for what
+# every field means. Name matches docker-compose.yml's service name
+# exactly, same reasoning as "db" matching for Postgres.
+apiVersion: v1
+kind: Service
+metadata:
+  name: profile-service
+  namespace: tinder
+spec:
+  selector:
+    app: profile-service
+  ports:
+    - port: 8001
+      targetPort: 8001

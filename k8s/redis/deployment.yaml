@@ -1,0 +1,35 @@
+# Deployment, not StatefulSet — redis has no volumes: entry in
+# docker-compose.yml today (deliberately: presence re-registers, chat
+# history lives in Cassandra, not Redis, so losing this on a restart is
+# fine). Same shape as auth-service/deployment.yaml otherwise.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: tinder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            # Same check docker-compose's healthcheck already uses — "can
+            # redis-cli actually get a PONG back," not just "is the
+            # process running."
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5

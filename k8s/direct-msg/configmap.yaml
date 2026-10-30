@@ -1,0 +1,15 @@
+# No DATABASE_URL here on purpose — Phase 3 removed direct_msg's Postgres
+# dependency entirely (messages live in Cassandra now). This service talks
+# to three OTHER services directly by their k8s Service names instead.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: direct-msg-config
+  namespace: tinder
+data:
+  AUTH_SERVICE_URL: "http://auth-service:8002"
+  MATCHER_SERVICE_URL: "http://matcher-service:8004"
+  SESSION_SERVICE_URL: "http://session-service:8006"
+  REDIS_URL: "redis://redis:6379/0"
+  CASSANDRA_HOSTS: "cassandra"
+  OTEL_COLLECTOR_ENDPOINT: "http://otel-collector:4317"

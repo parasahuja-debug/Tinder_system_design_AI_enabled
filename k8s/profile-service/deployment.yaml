@@ -1,0 +1,42 @@
+# Same shape as k8s/auth-service/deployment.yaml — see that file for what
+# every field means. Two differences worth flagging:
+#   - envFrom only references a ConfigMap, no secretRef — there's no
+#     secret.yaml for this service (see configmap.yaml's comment why).
+#   - the probe path is /metrics, not /health — profile_service has no
+#     /health route of its own (confirmed by reading its main.py), so
+#     /metrics (which every service has) is the honest substitute: it's
+#     still a real route that only returns 200 if the app is actually up.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profile-service
+  namespace: tinder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: profile-service
+  template:
+    metadata:
+      labels:
+        app: profile-service
+    spec:
+      containers:
+        - name: profile-service
+          image: tinder-profile-service:latest
+          imagePullPolicy: IfNotPresent # loaded via `kind load docker-image`, not a real registry — see auth-service/deployment.yaml's note
+          ports:
+            - containerPort: 8001
+          envFrom:
+            - configMapRef:
+                name: profile-service-config
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: 8001
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: 8001
+            initialDelaySeconds: 10

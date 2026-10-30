@@ -1,0 +1,58 @@
+# A Job, not a Deployment — same "runs once, then exits for good" shape
+# as docker-compose.yml's redpanda-init, for the exact same reason: it
+# only needs to create two topics, not stay running.
+#
+# Real Kubernetes has no "depends_on: condition: service_healthy" concept
+# at all — that's docker-compose-only syntax. The Kubernetes-native way to
+# wait for a dependency is an initContainer: a container that must finish
+# successfully before the main container(s) in the same pod are even
+# started. Here it just loops, retrying rpk's own health check against
+# redpanda's Service, until redpanda is actually ready to accept
+# connections — same effective wait docker-compose's depends_on gave us,
+# just expressed the way real Kubernetes actually supports.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redpanda-init
+  namespace: tinder
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-redpanda
+          image: redpandadata/redpanda:v24.2.10
+          # 2026-10-30: two real bugs found by actually testing this from
+          # a genuinely separate pod (not by assuming):
+          #   1. `rpk cluster health` doesn't accept --brokers at all — it
+          #      printed its own --help text instead of checking, which
+          #      grep correctly found no "Healthy: true" in, looping
+          #      forever.
+          #   2. `cluster health` talks to redpanda's ADMIN HTTP API (port
+          #      9644), a completely different subsystem from the Kafka
+          #      protocol port (9092) that --brokers/topic commands use —
+          #      so even the right flag name (-X admin.hosts=, not -X
+          #      brokers=) still failed until the admin port was actually
+          #      added to redpanda's own Service (see service.yaml) and
+          #      not just the Kafka one.
+          # (Oddly, `rpk topic create --brokers` below DOES work for the
+          # Kafka port, despite not appearing in its own --help either —
+          # confirmed by testing directly, not assumed just because
+          # docker-compose used it.)
+          command:
+            - sh
+            - -c
+            - "until rpk cluster health -X admin.hosts=redpanda:9644 | grep -q 'Healthy:.*true'; do echo waiting for redpanda; sleep 3; done"
+      containers:
+        - name: create-topics
+          image: redpandadata/redpanda:v24.2.10
+          # Identical topic-creation command to docker-compose.yml's
+          # redpanda-init — same partition counts, same reasoning
+          # (matcher_service/main.py's docstring covers why 6 vs 3).
+          command:
+            - sh
+            - -c
+            - "rpk topic create swipes --partitions 6 --replicas 1 --brokers redpanda:9092 || true; rpk topic create matches --partitions 3 --replicas 1 --brokers redpanda:9092 || true"
+  # Don't keep retrying forever if topic creation itself genuinely fails —
+  # a few attempts is enough to rule out a transient issue.
+  backoffLimit: 3

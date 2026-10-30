@@ -1,0 +1,58 @@
+# Deployment, not StatefulSet — same reasoning as redis/deployment.yaml:
+# docker-compose.yml's redpanda has no volumes: entry either, so there's
+# no real persisted state to protect here in this dev build.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redpanda
+  namespace: tinder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redpanda
+  template:
+    metadata:
+      labels:
+        app: redpanda
+    spec:
+      containers:
+        - name: redpanda
+          image: redpandadata/redpanda:v24.2.10
+          # Same single-node dev-mode flags docker-compose.yml already
+          # uses — advertise-kafka-addr uses "redpanda", matching this
+          # Deployment's own Service name (next piece), same as every
+          # other service's internal DNS name already does.
+          #
+          # args, not command: this image has its own /entrypoint.sh,
+          # which does real setup work before launching the redpanda
+          # binary. docker-compose's `command:` field only overrides CMD
+          # and leaves ENTRYPOINT alone — Kubernetes' `command:` field
+          # overrides ENTRYPOINT itself, which would skip that script
+          # entirely and run the raw binary directly (exactly what broke
+          # just now: "unrecognised option" from the raw binary rejecting
+          # a flag format the entrypoint script normally handles). `args`
+          # is Kubernetes' equivalent of compose's `command:` — it leaves
+          # ENTRYPOINT in place and just hands it these as arguments.
+          args:
+            - redpanda
+            - start
+            - --smp=1
+            - --memory=512M
+            - --overprovisioned
+            - --node-id=0
+            - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+            - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+          ports:
+            - containerPort: 9092
+          readinessProbe:
+            # Same health check docker-compose's healthcheck already uses.
+            exec:
+              command: ["sh", "-c", "rpk cluster health | grep -q 'Healthy:.*true'"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "rpk cluster health | grep -q 'Healthy:.*true'"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
