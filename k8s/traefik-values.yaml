@@ -45,3 +45,35 @@ service:
 # is the correct strategy for this specific constraint, not a workaround.
 updateStrategy:
   type: Recreate
+
+# --- Gateway API (Phase 6 routing, Option C) ---------------------------------
+# Routes for this project are written as Gateway API HTTPRoutes (the
+# vendor-neutral k8s routing standard) rather than Traefik's own IngressRoute
+# CRD, so they move to a cloud gateway (Azure App Gateway for Containers, GKE,
+# AWS LB controller) unchanged. Only the ForwardAuth Middleware the routes
+# reference is Traefik-specific — that's the one spot to swap on a cloud move.
+#
+# PREREQUISITE — the Gateway API CRDs are NOT shipped by this chart; install
+# them first on any fresh cluster, pinned to the version Traefik v3.7 targets:
+#   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.3/standard-install.yaml
+providers:
+  kubernetesGateway:
+    # Makes Traefik watch Gateway/HTTPRoute objects. The kubernetesCRD
+    # provider (on by default) stays enabled too — the ForwardAuth
+    # Middleware is a Traefik CRD that HTTPRoutes reference.
+    enabled: true
+gateway:
+  listeners:
+    web:
+      # Only port/protocol defaults are kept (8000/HTTP, matching kind's
+      # extraPortMappings). The chart's Gateway lives in the traefik
+      # namespace, but our HTTPRoutes live in tinder next to the services
+      # they target — by default a Gateway only accepts routes from its own
+      # namespace, so this explicitly admits tinder (and only tinder, not
+      # All). kubernetes.io/metadata.name is a label k8s sets on every
+      # namespace automatically, so nothing extra to maintain.
+      namespacePolicy:
+        from: Selector
+        selector:
+          matchLabels:
+            kubernetes.io/metadata.name: tinder

@@ -1,0 +1,41 @@
+# The auth gate for every protected route — the k8s/Traefik equivalent of
+# nginx's `auth_request /auth/validate` + `auth_request_set` + `proxy_set_header
+# X-User-Id` in gateway/conf.d/default.conf.
+#
+# How it works per request: before forwarding, Traefik sends a GET to
+# auth-service's /validate carrying only the client's Authorization header.
+#   - 2xx  -> copy X-User-Id from that response onto the original request and
+#             forward it to the target service.
+#   - 401  -> return that 401 to the client; the target service never sees it.
+# Nothing happens until an HTTPRoute references this Middleware via an
+# ExtensionRef filter (see the routes in this same directory).
+#
+# CLOUD-PORTABILITY NOTE: this is the one Traefik-specific piece of the
+# routing setup (apiVersion traefik.io). The HTTPRoutes are plain Gateway API
+# and carry over to a cloud gateway unchanged; on a move, replace this file
+# (e.g. with Azure APIM's validate-jwt policy) and the one ExtensionRef line
+# in each protected route.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: forward-auth
+  # Lives in tinder, not traefik: an HTTPRoute's ExtensionRef can only point
+  # at a Middleware in the route's own namespace, and the routes live here.
+  namespace: tinder
+spec:
+  forwardAuth:
+    # Full cluster DNS name, not the short "auth-service": this call is made
+    # by the Traefik pod, which runs in the traefik namespace, where the short
+    # name wouldn't resolve to tinder's auth-service.
+    address: http://auth-service.tinder.svc.cluster.local:8002/validate
+    # Send only the token to /validate. Traefik's default is to forward every
+    # client header (cookies etc.), which auth-service has no use for.
+    authRequestHeaders:
+      - Authorization
+    # The security-critical line: Traefik REPLACES any X-User-Id already on
+    # the incoming request with the one auth-service returned. A client
+    # sending its own "X-User-Id: 1" to impersonate someone gets overwritten —
+    # that overwrite is why downstream services can trust this header without
+    # re-checking the JWT.
+    authResponseHeaders:
+      - X-User-Id
