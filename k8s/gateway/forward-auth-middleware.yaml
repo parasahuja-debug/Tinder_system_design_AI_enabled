@@ -39,3 +39,12 @@ spec:
     # re-checking the JWT.
     authResponseHeaders:
       - X-User-Id
+    # Strip ALL client-sent X-Forwarded-* headers before calling /validate,
+    # rather than Traefik's unset default (strips some, passes others like
+    # X-Forwarded-Prefix through) — same rule as X-User-Id: never trust what
+    # the client claims about itself.
+    trustForwardHeader: false
+    # Cap how much of auth-service's reply Traefik will read into memory.
+    # /validate returns ~50 bytes; 4KB is generous headroom, and anything
+    # bigger means something is wrong — refuse rather than buffer it.
+    maxResponseBodySize: 4096

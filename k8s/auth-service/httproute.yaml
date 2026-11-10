@@ -1,0 +1,45 @@
+# How auth-service is reached from OUTSIDE the cluster — the Gateway API
+# equivalent of nginx's public `location /auth` block. (service.yaml covers
+# how it's reached from inside; this file is the external door.)
+#
+# Written as a plain Gateway API HTTPRoute, not Traefik's own IngressRoute, so
+# it carries over unchanged to any cloud gateway that implements Gateway API.
+#
+# PUBLIC route — deliberately no forward-auth guard: you can't hold a token
+# before you've registered/logged in, which is exactly what these endpoints do.
+# Only /auth/register and /auth/login live under this prefix; /validate,
+# /metrics and /health sit outside /auth in auth_service/main.py, so this door
+# can't reach them.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: auth-service
+  namespace: tinder
+spec:
+  # Which Gateway (front door) these directions attach to. The Gateway lives
+  # in the traefik namespace and admits routes from tinder only (see
+  # k8s/traefik-values.yaml's namespacePolicy). sectionName pins it to the
+  # plain-HTTP "web" listener on port 8000.
+  parentRefs:
+    - name: traefik-gateway
+      namespace: traefik
+      sectionName: web
+  rules:
+    - matches:
+        # PathPrefix matches whole path segments: /auth and /auth/login match,
+        # /authfoo does not (stricter than nginx's plain-string prefix).
+        - path:
+            type: PathPrefix
+            value: /auth
+      filters:
+        # No guard runs on this door, so nothing would overwrite a client-sent
+        # X-User-Id — strip it here instead, so a forged identity header never
+        # gets past the gateway on ANY route, guarded or not. Core Gateway API
+        # filter, not Traefik-specific.
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            remove:
+              - X-User-Id
+      backendRefs:
+        - name: auth-service
+          port: 8002

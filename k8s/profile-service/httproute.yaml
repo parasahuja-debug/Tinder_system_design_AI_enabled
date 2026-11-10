@@ -1,0 +1,40 @@
+# How profile-service is reached from OUTSIDE the cluster — the Gateway API
+# equivalent of nginx's protected `location /profile` block. This is the
+# template every GUARDED route in this repo follows (image, recommendation,
+# matcher, direct-msg's /chat/history).
+#
+# GUARDED route: every request first passes the forward-auth Middleware
+# (k8s/gateway/forward-auth-middleware.yaml), which checks the Bearer token
+# with auth-service and sets X-User-Id — overwriting any client-sent value —
+# before the request ever reaches profile-service.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: profile-service
+  namespace: tinder
+spec:
+  # Same front door as every route here — see k8s/auth-service/httproute.yaml.
+  parentRefs:
+    - name: traefik-gateway
+      namespace: traefik
+      sectionName: web
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /profile
+      filters:
+        # ExtensionRef is Gateway API's standard hook for "run this
+        # implementation-specific filter". CLOUD-PORTABILITY NOTE: this block
+        # is the only Traefik-specific part of this file — on a move to a
+        # cloud gateway, swap it for that gateway's auth mechanism; the
+        # match/backendRefs stay as-is. The Middleware must be in this
+        # route's own namespace (tinder).
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: forward-auth
+      backendRefs:
+        - name: profile-service
+          port: 8001

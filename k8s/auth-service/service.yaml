@@ -3,8 +3,8 @@
 # within the same namespace) — same role docker-compose's built-in DNS
 # already plays when a service calls http://auth-service:8002 today.
 # ClusterIP (the default): internal-only, nothing outside the cluster
-# reaches this directly — only Traefik, once we write its IngressRoute,
-# gets a path in from outside.
+# reaches this directly — only Traefik gets a path in from outside, via the
+# Gateway API route in httproute.yaml (next to this file).
 apiVersion: v1
 kind: Service
 metadata:

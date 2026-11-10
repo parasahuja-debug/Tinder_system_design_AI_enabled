@@ -1,0 +1,36 @@
+# External door for matcher-service — Gateway API equivalent of nginx's
+# protected `location /swipe` and `location /matches`. GUARDED route; same
+# shape and reasoning as k8s/profile-service/httproute.yaml (read that one
+# for the full comments).
+#
+# nginx needed two location blocks because each block has one path; here a
+# single rule can list several matches (OR'ed together), and both paths share
+# the same guard and backend, so one rule covers both.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: matcher-service
+  namespace: tinder
+spec:
+  parentRefs:
+    - name: traefik-gateway
+      namespace: traefik
+      sectionName: web
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /swipe
+        - path:
+            type: PathPrefix
+            value: /matches
+      filters:
+        # Traefik-specific auth guard (cloud-portability swap point).
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: forward-auth
+      backendRefs:
+        - name: matcher-service
+          port: 8004

@@ -20,6 +20,19 @@ tolerations:
 # pod-private IP that something else would need to route to — this is what
 # actually connects to kind's extraPortMappings.
 hostNetwork: true
+deployment:
+  # KIND-SPECIFIC (pairs with hostNetwork above). A hostNetwork pod inherits
+  # the NODE's DNS resolver by default (Docker Desktop's, 192.168.65.254),
+  # which knows nothing about *.svc.cluster.local — so the forward-auth
+  # Middleware's call to auth-service.tinder.svc.cluster.local failed with
+  # "no such host" and every guarded route returned 500. ClusterFirstWithHostNet
+  # = keep the host network, but resolve names via the cluster's CoreDNS first
+  # (falling back to upstream DNS for external names like AWS endpoints).
+  # Normal routing never hit this: Traefik gets backend pod IPs from the k8s
+  # API, not DNS — only the ForwardAuth call does a DNS lookup.
+  # On a real cloud (Traefik behind a LoadBalancer Service, no hostNetwork)
+  # pods use cluster DNS by default — delete this along with hostNetwork.
+  dnsPolicy: ClusterFirstWithHostNet
 service:
   # With hostNetwork already doing the job of exposing Traefik, a separate
   # Service of type LoadBalancer/NodePort would be redundant plumbing —
