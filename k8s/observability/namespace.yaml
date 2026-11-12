@@ -1,0 +1,19 @@
+# A dedicated namespace for the monitoring stack (otel-collector, Tempo,
+# Jaeger, Prometheus, Grafana, postgres-exporter) — kept apart from the
+# app's own `tinder` namespace, same reasoning as Traefik getting its own:
+# monitoring is a separate system with its own lifecycle and permissions.
+#
+# Why that matters here specifically:
+#   - Prometheus's read-the-pod-list permission (RBAC) is scoped to this
+#     system, not mixed in with app workloads.
+#   - On a cloud move, this whole stack is often replaced wholesale by a
+#     managed service (e.g. Azure Monitor / Managed Grafana) — then this
+#     entire k8s/observability/ folder simply stops being applied.
+# Cost of the split: services in `tinder` reach the collector by its
+# namespace-qualified name (otel-collector.observability), and Secrets
+# Tempo needs (AWS creds) must exist in THIS namespace — Secrets can't be
+# read across namespaces.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability

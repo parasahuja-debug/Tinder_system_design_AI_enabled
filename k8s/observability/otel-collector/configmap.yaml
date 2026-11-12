@@ -1,0 +1,58 @@
+# The Collector's config file, carried as a ConfigMap and mounted into the
+# pod at the same path docker-compose mounted observability/otel-collector-
+# config.yaml from disk — the Collector binary can't tell the difference.
+# That compose file stays untouched (docker-compose still uses it); this is
+# the k8s copy.
+#
+# Every app service (namespace tinder) sends spans here via its
+# OTEL_COLLECTOR_ENDPOINT = http://otel-collector.observability:4317. This
+# file is still the only place that knows where traces end up — adding or
+# swapping a trace backend means editing this ConfigMap, not any service.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: observability
+data:
+  config.yaml: |
+    # receivers: the inbound door — OTLP from every service's SDK.
+    # gRPC 4317 is what the services actually use; HTTP 4318 is a fallback.
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    # exporters: the outbound side. Short names (tempo, jaeger) work as-is:
+    # Tempo and Jaeger live in this same observability namespace, where
+    # short Service names resolve. insecure: in-cluster pod-to-pod hop,
+    # not public traffic.
+    exporters:
+      otlp/tempo:
+        endpoint: tempo:4317
+        tls:
+          insecure: true
+      otlp/jaeger:
+        endpoint: jaeger:4317
+        tls:
+          insecure: true
+
+    # extensions: health_check is new for k8s — a tiny "I'm alive" HTTP
+    # endpoint on 13133 that the Deployment's liveness/readiness probes hit.
+    # Probing gRPC 4317 directly would only prove the port is open, not
+    # that the Collector is actually up and processing.
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+    # service: wires it together. The traces pipeline is the fan-out —
+    # everything in via otlp goes out through BOTH exporters. Extensions
+    # only run if listed here too, not just defined above.
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          exporters: [otlp/tempo, otlp/jaeger]
