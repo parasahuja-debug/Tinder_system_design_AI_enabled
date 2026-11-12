@@ -1,0 +1,40 @@
+# One-time setup: creates Jaeger's keyspace (its tables) in Cassandra — the
+# k8s equivalent of docker-compose.yml's `jaeger-schema` one-off container.
+# A Job, not a Deployment: it runs to completion once and stops, same shape
+# as k8s/redpanda/init-job.yaml.
+#
+# Lives in `observability` with the rest of Jaeger (it's Jaeger's setup, not
+# Cassandra's), even though the Cassandra it writes to lives in `tinder`.
+#
+# No wait-for-Cassandra initContainer (unlike redpanda-init): the schema
+# image's own entrypoint script already retries until Cassandra answers.
+#
+# Retention comes from the schema itself: Jaeger's tables default to a 2-day
+# TTL, matching Tempo's 48h compactor — neither trace store grows unbounded.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jaeger-schema
+  namespace: observability
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: jaeger-schema
+          image: jaegertracing/jaeger-cassandra-schema:1.62.0 # same as compose
+          env:
+            # Namespace-qualified: Cassandra's Service is in `tinder`, so the
+            # short name "cassandra" (what compose used) won't resolve here.
+            - name: CQLSH_HOST
+              value: cassandra.tinder
+            # Single-node dev cluster: replication factor 1, matching
+            # Cassandra's own replicas: 1 — not a multi-DC prod topology.
+            - name: MODE
+              value: test
+            # Explicit so the Jaeger Deployment's CASSANDRA_KEYSPACE is
+            # guaranteed to match, rather than relying on the image default.
+            - name: KEYSPACE
+              value: jaeger_v1_dc1
+  # A few retries rules out a transient failure without looping forever.
+  backoffLimit: 3

@@ -12,6 +12,10 @@ spec:
     metadata:
       labels:
         app: direct-msg
+      # Prometheus opt-in markers — same as auth-service's deployment.yaml.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8007"
     spec:
       containers:
         - name: direct-msg

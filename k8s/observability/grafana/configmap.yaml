@@ -1,0 +1,144 @@
+# Grafana's provisioning — files Grafana reads at startup to configure itself
+# (data sources, dashboard folders, dashboards), so a replacement pod comes
+# up fully set up with no UI clicking. k8s copies of
+# observability/grafana/provisioning/** and observability/grafana/dashboards/
+# (docker-compose keeps using those, untouched).
+#
+# Three ConfigMaps in one file because each is mounted into a DIFFERENT
+# directory (Grafana looks for each kind of provisioning in its own place) —
+# see the volumes in deployment.yaml.
+
+# 1. Data sources -> /etc/grafana/provisioning/datasources/
+#    Short Service names work: Grafana lives in the same observability
+#    namespace as Prometheus, Tempo and Jaeger.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: observability
+data:
+  datasource.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        # Explicit uid: the dashboard's panels reference
+        # datasource uid "Prometheus". The compose copy never set one, so
+        # Grafana generated a random uid and those panels could fail with
+        # "datasource not found" — fixed here.
+        uid: Prometheus
+        access: proxy # Grafana's backend calls Prometheus, not the browser
+        url: http://prometheus:9090
+        isDefault: true
+      # Tempo — trace archive #1 (S3-backed); query port 3200.
+      - name: Tempo
+        type: tempo
+        uid: Tempo
+        access: proxy
+        url: http://tempo:3200
+      # Jaeger — trace archive #2 (Cassandra-backed). New vs compose: lets
+      # you browse Jaeger's traces inside Grafana too, side by side with
+      # Tempo's. Grafana's Jaeger plugin talks to Jaeger's query/UI port.
+      - name: Jaeger
+        type: jaeger
+        uid: Jaeger
+        access: proxy
+        url: http://jaeger:16686
+---
+# 2. Dashboard provider -> /etc/grafana/provisioning/dashboards/
+#    Not a dashboard itself: tells Grafana which directory to load dashboard
+#    JSON files from, and which UI folder to put them in.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: observability
+data:
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: tinder-dashboards
+        folder: Tinder
+        type: file
+        options:
+          # Separate from the provider config's own directory, so the two
+          # mounts don't collide (same reasoning as the compose copy).
+          path: /var/lib/grafana/dashboards
+---
+# 3. The dashboards themselves -> /var/lib/grafana/dashboards/
+#    COPY of observability/grafana/dashboards/tinder-overview.json (chosen
+#    over generating this ConfigMap from that file, to keep k8s/
+#    self-contained). Drift risk: if you edit one copy, edit the other.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: observability
+data:
+  tinder-overview.json: |
+    {
+      "title": "Tinder — Overview",
+      "uid": "tinder-overview",
+      "timezone": "browser",
+      "refresh": "10s",
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Logins over time",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "targets": [
+            {
+              "expr": "rate(auth_logins_total[5m])",
+              "legendFormat": "logins/sec",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Chat volume",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "targets": [
+            {
+              "expr": "rate(chat_messages_total[5m])",
+              "legendFormat": "messages/sec",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "DB size (tinder database)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+          "targets": [
+            {
+              "expr": "pg_database_size_bytes{datname=\"tinder\"}",
+              "legendFormat": "db size",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Per-service request rate (bonus)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(http_requests_total[5m])) by (job)",
+              "legendFormat": "{{job}}",
+              "refId": "A"
+            }
+          ]
+        }
+      ]
+    }

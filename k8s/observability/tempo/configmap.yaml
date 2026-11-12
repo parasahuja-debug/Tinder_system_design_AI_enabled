@@ -1,0 +1,53 @@
+# Tempo's config file, carried as a ConfigMap and mounted where the
+# Deployment's -config.file flag points. k8s copy of observability/tempo.yaml
+# (which docker-compose keeps using, untouched).
+#
+# ${VAR} placeholders are NOT filled in here — Tempo expands them from its
+# own environment at startup (-config.expand-env=true), and those env vars
+# come from the tempo-secret Secret. So no credential ever appears in this
+# (committed) file.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: observability
+data:
+  tempo.yaml: |
+    # server: Tempo's own HTTP API — Grafana queries traces here (3200).
+    server:
+      http_listen_port: 3200
+
+    # distributor.receivers: Tempo's inbound door, accepting OTLP spans from
+    # the Collector's otlp/tempo exporter. Endpoints are explicit (unlike the
+    # compose copy): newer Tempo releases changed the default bind address to
+    # localhost, which would silently stop the Collector — another pod —
+    # from reaching it after an upgrade. 0.0.0.0 = listen on the pod's IP.
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+
+    # storage.trace: where ingested spans are written — the same S3 bucket
+    # image-service uses, under its own traces/ prefix so Tempo's objects
+    # never collide with image keys.
+    storage:
+      trace:
+        backend: s3
+        s3:
+          bucket: ${S3_BUCKET_NAME}
+          endpoint: s3.${AWS_REGION}.amazonaws.com
+          region: ${AWS_REGION}
+          access_key: ${AWS_ACCESS_KEY_ID}
+          secret_key: ${AWS_SECRET_ACCESS_KEY}
+          prefix: traces
+
+    # compactor: the budget-safety cap — trace blocks older than 48h are
+    # deleted, so the traces/ prefix has a hard ceiling no matter how long
+    # the cluster runs.
+    compactor:
+      compaction:
+        block_retention: 48h

@@ -16,6 +16,10 @@ spec:
     metadata:
       labels:
         app: image-service
+      # Prometheus opt-in markers — same as auth-service's deployment.yaml.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8003"
     spec:
       containers:
         - name: image-service

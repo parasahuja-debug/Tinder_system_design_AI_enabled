@@ -1,0 +1,18 @@
+# A stable address for Grafana: grafana:3000.
+#
+# ClusterIP: internal-only. Open the UI from your own machine with
+#   kubectl port-forward -n observability svc/grafana 3000:3000
+# then browse http://localhost:3000 and log in with grafana-secret's values.
+# Not routed through the public gateway — it's an internal ops tool.
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: observability
+spec:
+  selector:
+    app: grafana # matches the Deployment's pod label
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000

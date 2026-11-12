@@ -17,6 +17,10 @@ spec:
     metadata:
       labels:
         app: matcher-service
+      # Prometheus opt-in markers — same as auth-service's deployment.yaml.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8004"
     spec:
       containers:
         - name: matcher-service

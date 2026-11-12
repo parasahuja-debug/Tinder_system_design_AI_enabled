@@ -1,0 +1,26 @@
+# A stable address for Jaeger. The name must be exactly `jaeger`: the
+# Collector's config already exports to jaeger:4317 (same observability
+# namespace, so the short name resolves).
+#
+# ClusterIP: internal-only. Jaeger's UI has no login, so it's opened from
+# your own machine with `kubectl port-forward svc/jaeger 16686:16686`, never
+# exposed through the public gateway.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  namespace: observability
+spec:
+  selector:
+    app: jaeger # matches the Deployment's pod label
+  ports:
+    # Spans in, from the Collector's otlp/jaeger exporter.
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    # The web viewer (reached via port-forward to this Service).
+    - name: ui
+      port: 16686
+      targetPort: 16686
+    # 14269 (admin/health) deliberately not exposed: only the kubelet's
+    # probes use it, and they hit the pod directly.

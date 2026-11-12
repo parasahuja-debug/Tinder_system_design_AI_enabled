@@ -1,0 +1,81 @@
+# Permissions for Prometheus to DISCOVER pods (kubernetes_sd_configs) instead
+# of reading a hand-maintained target list. By default a pod may ask the
+# Kubernetes API nothing at all; these objects grant exactly one thing:
+# read the pod list in the `tinder` namespace (objects 1-3) and, since
+# postgres-exporter was added, the `observability` namespace (objects 4-5).
+#
+# Three objects in one file (separated by ---) because they only make sense
+# together: an identity, a permission list, and the link between them.
+#
+# Least privilege, deliberately: a namespaced Role (tinder only), not a
+# ClusterRole. Prometheus can't even see what runs in other namespaces, and
+# has no write verbs anywhere. Widening later (e.g. to scrape Traefik or the
+# Collector) = another Role+RoleBinding in that namespace, or switching to a
+# ClusterRole.
+
+# 1. The identity Prometheus's pod runs as (deployment.yaml sets
+#    serviceAccountName: prometheus). Lives with Prometheus.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: observability
+---
+# 2. The permission list. A Role only grants access inside its OWN namespace,
+#    which is why it lives in `tinder` (the namespace being discovered), not
+#    in observability.
+#    get = read one pod, list = see all pods, watch = be told when pods
+#    appear/disappear (so new replicas get scraped within seconds).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus-pod-reader
+  namespace: tinder
+rules:
+  - apiGroups: [""] # "" = the core API group, where pods live
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+# 3. The bridge: grants the Role above (in tinder) to the ServiceAccount
+#    from the OTHER namespace (observability).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus-pod-reader
+  namespace: tinder
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: observability
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus-pod-reader
+---
+# 4 + 5. Same read-only pod permission, but in `observability` — added so
+#    Prometheus can also discover opted-in monitoring components (first:
+#    postgres-exporter; later possibly the Collector/Tempo/Jaeger/Grafana's
+#    own /metrics). Still two named namespaces, not cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus-pod-reader
+  namespace: observability
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus-pod-reader
+  namespace: observability
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: observability
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus-pod-reader

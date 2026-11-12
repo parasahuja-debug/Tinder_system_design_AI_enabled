@@ -1,0 +1,74 @@
+# How Prometheus runs — the k8s equivalent of docker-compose.yml's
+# `prometheus` block. Config in configmap.yaml, its discovery permissions in
+# rbac.yaml, its stable address in service.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  # Recreate, not the default rolling update: two Prometheus pods briefly
+  # running side by side would each keep their own separate readings,
+  # and with emptyDir storage there's nothing to share anyway.
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      # Run as the identity from rbac.yaml. Without this the pod gets the
+      # namespace's `default` ServiceAccount, which has no permissions, and
+      # pod discovery fails with "forbidden".
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.54.1 # same pinned version as compose
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            # Default is 15d. Storage here is an emptyDir on the node's own
+            # disk, so cap it: 2d matches Tempo's and Jaeger's 48h and keeps
+            # the node's disk safe. Cost: no look-back beyond 2 days.
+            - --storage.tsdb.retention.time=2d
+          ports:
+            - name: http
+              containerPort: 9090 # queries (Grafana) + its own web UI
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 15
+          resources:
+            # Prometheus keeps recent samples in memory before writing them
+            # to disk — the hungriest piece of the observability stack.
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        # emptyDir (agreed: no persistent disk) — readings survive a
+        # container crash but reset if the pod is deleted/rescheduled, same
+        # as compose losing them on container recreate. Alternative not
+        # taken: a PVC, which would add another kind-specific StorageClass
+        # spot.
+        - name: data
+          emptyDir: {}

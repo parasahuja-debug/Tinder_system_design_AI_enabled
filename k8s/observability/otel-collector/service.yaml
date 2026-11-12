@@ -1,0 +1,27 @@
+# A stable address for the Collector: otel-collector.observability (from
+# other namespaces, e.g. every app service in `tinder`) or just
+# otel-collector (from inside observability). The pod's own IP changes on
+# every restart; this name always forwards to whichever Collector pod is
+# currently Ready — same role compose's built-in DNS played for
+# http://otel-collector:4317.
+#
+# ClusterIP (the default): reachable only from inside the cluster — nothing
+# outside should be able to push spans into the trace pipeline.
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  selector:
+    app: otel-collector # matches the Deployment's pod label
+  ports:
+    # Only the two OTLP intakes. The 13133 health port is deliberately not
+    # exposed: only the kubelet's probes use it, and they hit the pod
+    # directly, not through this Service.
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318

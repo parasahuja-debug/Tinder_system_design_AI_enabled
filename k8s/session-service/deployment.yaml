@@ -14,6 +14,10 @@ spec:
     metadata:
       labels:
         app: session-service
+      # Prometheus opt-in markers — same as auth-service's deployment.yaml.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8006"
     spec:
       containers:
         - name: session-service

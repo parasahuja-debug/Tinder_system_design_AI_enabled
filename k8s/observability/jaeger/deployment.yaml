@@ -1,0 +1,58 @@
+# How Jaeger runs — the k8s equivalent of docker-compose.yml's `jaeger`
+# block. Settings come from configmap.yaml (env vars), its tables were
+# created by schema-job.yaml, and service.yaml gives it a stable address.
+#
+# Apply order matters: schema-job.yaml must have completed first, so the
+# keyspace exists before Jaeger connects (what compose's depends_on
+# condition: service_completed_successfully used to guarantee).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: observability
+spec:
+  # all-in-one = receive + store + UI in one process; scaling out means
+  # splitting into Jaeger's separate collector/query components instead.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+    spec:
+      containers:
+        - name: jaeger
+          image: jaegertracing/all-in-one:1.62.0 # same pinned version as compose
+          envFrom:
+            # SPAN_STORAGE_TYPE, CASSANDRA_SERVERS, CASSANDRA_KEYSPACE,
+            # COLLECTOR_OTLP_ENABLED — see configmap.yaml.
+            - configMapRef:
+                name: jaeger-config
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317 # spans from the Collector's otlp/jaeger
+            - name: ui
+              containerPort: 16686 # Jaeger's own web viewer
+            - name: admin
+              containerPort: 14269 # admin port: health page + metrics
+          readinessProbe:
+            # The admin health page only reports OK once Jaeger is up and
+            # connected to its storage — "ready" really means "can store".
+            httpGet:
+              path: /
+              port: admin
+            initialDelaySeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: admin
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi

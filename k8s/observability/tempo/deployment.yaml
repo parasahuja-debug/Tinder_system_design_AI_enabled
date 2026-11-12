@@ -1,0 +1,86 @@
+# How Tempo runs — the k8s equivalent of docker-compose.yml's `tempo` block.
+# Its config lives in configmap.yaml, its AWS credentials in the tempo-secret
+# Secret (template: secret.yaml.example), how other pods reach it in
+# service.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  namespace: observability
+spec:
+  # Single-binary ("monolithic") Tempo — one process does ingest, storage
+  # and querying. Scaling Tempo out means switching to its microservices
+  # mode, not just raising this number.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tempo
+  template:
+    metadata:
+      labels:
+        app: tempo
+    spec:
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.6.1 # same pinned version as compose
+          args:
+            # Tempo has no default config path, so point it at the file the
+            # ConfigMap mounts below.
+            - -config.file=/etc/tempo/tempo.yaml
+            # Fill ${AWS_ACCESS_KEY_ID}-style placeholders in that file from
+            # this container's environment (supplied by envFrom below).
+            - -config.expand-env=true
+          envFrom:
+            # Every key in tempo-secret becomes an env var in this container
+            # (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION,
+            # S3_BUCKET_NAME) — the values the config placeholders expand to.
+            - secretRef:
+                name: tempo-secret
+          ports:
+            - name: http
+              containerPort: 3200 # queries (Grafana) + /ready health page
+            - name: otlp-grpc
+              containerPort: 4317 # spans from the Collector
+            - name: otlp-http
+              containerPort: 4318
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo
+            # Scratch disk for Tempo's write-ahead log: recent spans are held
+            # here for a few minutes, then uploaded to S3 in batches.
+            - name: data
+              mountPath: /var/tempo
+          readinessProbe:
+            # Tempo's own readiness page; it reports not-ready for its first
+            # ~15s while the ingester warms up, hence the delay.
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 20
+          livenessProbe:
+            # Same page, but more patient — a slow warm-up must not be
+            # mistaken for a hang and trigger a restart loop.
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 45
+            periodSeconds: 15
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: tempo-config
+        # emptyDir: a blank folder that survives container crashes but is
+        # wiped if the pod is deleted/rescheduled. Cost: the last few
+        # minutes of not-yet-uploaded spans can be lost on a pod move —
+        # acceptable for 48h debug traces (compose behaves the same).
+        # Alternative not taken: a PVC, which keeps them but adds another
+        # kind-specific StorageClass spot.
+        - name: data
+          emptyDir: {}

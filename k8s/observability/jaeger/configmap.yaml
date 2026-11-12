@@ -1,0 +1,24 @@
+# Jaeger's settings as env vars (read by the Deployment via envFrom) — the
+# k8s equivalent of docker-compose.yml's jaeger.environment block. A list of
+# settings, not a config file: Jaeger all-in-one is configured entirely via
+# environment variables, unlike Tempo/the Collector which read a YAML file.
+#
+# Kept as a ConfigMap (rather than inline env in the Deployment) to match
+# how every app service under k8s/ separates "what it runs" from "its
+# settings".
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jaeger-config
+  namespace: observability
+data:
+  # Persist spans in Cassandra (the default would be in-memory, lost on
+  # every restart).
+  SPAN_STORAGE_TYPE: "cassandra"
+  # Namespace-qualified: Cassandra's Service lives in `tinder`.
+  CASSANDRA_SERVERS: "cassandra.tinder"
+  # Must match the keyspace the jaeger-schema Job created (schema-job.yaml).
+  CASSANDRA_KEYSPACE: "jaeger_v1_dc1"
+  # Accept OTLP on 4317 — the format the Collector's otlp/jaeger exporter
+  # sends.
+  COLLECTOR_OTLP_ENABLED: "true"

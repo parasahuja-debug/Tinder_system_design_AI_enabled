@@ -418,6 +418,29 @@ Each backend service keeps its own lean `CLAUDE.md`.
   rather than done per-service as each one gets its k8s manifests, since
   RBAC is a cluster-wide policy decision, better applied once after every
   service exists rather than piecemeal.
+- **Added (2026-11-13), parked here by user choice — fuller distributed
+  traces.** Today every service has only `opentelemetry-instrumentation-
+  fastapi`, so traces are single-service request timers: one request through
+  the gateway shows up as separate, unlinked traces (`/validate` on
+  auth-service, then the real call), with no DB/Redis/Kafka steps inside.
+  To make one user action = one connected trace:
+    - Traefik tracing (Helm values: OTLP to
+      `otel-collector.observability:4317`) — the top-level span that ties a
+      visit together.
+    - `httpx` instrumentation (direct-msg → session/matcher calls) so the
+      `traceparent` header propagates between services.
+    - `sqlalchemy` (Postgres), `redis`, `cassandra-driver` instrumentation —
+      DB/cache time visible inside a request's span.
+    - Kafka: carry trace context inside the swipe/match message headers so
+      matcher-consumer's work joins the producer's trace (the trickiest one;
+      already noted as deferred in the rebuild plan's Phase 5 status).
+  Do it before the final end-to-end walkthrough, so "one trace for the
+  whole journey" can actually be checked.
+- **Added (2026-11-13) — dedicated IAM user for Tempo.** Tempo currently
+  reuses image-service's AWS credentials (`k8s/observability/tempo/
+  secret.yaml.example`). Hardening: a separate IAM user whose policy only
+  allows the bucket's `traces/` prefix, so a leaked Tempo key can't touch
+  user images.
 - Write a **Day 10+ backlog**: real sharded/Cassandra recommendation engine,
   MinIO/S3 for images, JWT refresh + hardening, per-service databases,
   <!-- 2026-08-09: removed from backlog — "live-DB tool access for the chatbot

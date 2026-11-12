@@ -1,0 +1,69 @@
+# postgres-exporter: a translator. Postgres has no /metrics page of its own,
+# so this logs into Postgres, reads its statistics (database size,
+# connections, ...) and republishes them as a /metrics page on 9187 for
+# Prometheus. It's what feeds Grafana's "DB size" panel. k8s equivalent of
+# docker-compose.yml's `postgres-exporter`.
+#
+# Lives in `observability` (with the rest of monitoring) and reaches Postgres
+# across namespaces as db.tinder. DB login comes from its own Secret copy
+# (secret.yaml.example explains why it can't reuse postgres-secret).
+#
+# No Service on purpose: nothing calls the exporter by name. Prometheus
+# discovers this POD via the annotations below and scrapes it directly by
+# pod IP — the same way it reads the app pods.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: observability
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-exporter
+  template:
+    metadata:
+      labels:
+        # Becomes job="postgres-exporter" via Prometheus relabeling — same
+        # job name compose's static target had.
+        app: postgres-exporter
+      # Prometheus opt-in markers (discovery covers observability too —
+      # see k8s/observability/prometheus/configmap.yaml).
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
+    spec:
+      containers:
+        - name: postgres-exporter
+          image: prometheuscommunity/postgres-exporter:v0.15.0 # same as compose
+          env:
+            # Non-secret part of the connection. db.tinder = Postgres's
+            # Service ("db") in the tinder namespace. sslmode=disable matches
+            # compose; the hop never leaves the cluster.
+            - name: DATA_SOURCE_URI
+              value: "db.tinder:5432/tinder?sslmode=disable"
+          envFrom:
+            # DATA_SOURCE_USER / DATA_SOURCE_PASS — combined with the URI
+            # above by the exporter itself, so no password in this file.
+            - secretRef:
+                name: postgres-exporter-secret
+          ports:
+            - name: metrics
+              containerPort: 9187
+          readinessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 128Mi

@@ -1,0 +1,29 @@
+# A stable address for Tempo. The name must be exactly `tempo`: the
+# Collector's config already exports to tempo:4317, and Grafana's datasource
+# will query tempo:3200 — both live in this same observability namespace,
+# where the short name resolves.
+#
+# ClusterIP: internal-only. You reach Tempo's data through Grafana (itself
+# reached via kubectl port-forward), never directly from outside.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: observability
+spec:
+  selector:
+    app: tempo # matches the Deployment's pod label
+  ports:
+    # Queries — Grafana asks "show me trace X / slow traces" here. Unlike the
+    # Collector's health port, this one IS needed on the Service, because
+    # Grafana reaches it through this Service.
+    - name: http
+      port: 3200
+      targetPort: 3200
+    # Spans in, from the Collector's otlp/tempo exporter.
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318

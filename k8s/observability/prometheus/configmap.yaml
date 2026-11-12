@@ -1,0 +1,71 @@
+# Prometheus's config, carried as a ConfigMap. k8s replacement for
+# observability/prometheus.yml (which docker-compose keeps using, untouched).
+#
+# The big change from compose: no hand-maintained target list. Prometheus
+# asks the Kubernetes API for the pods in `tinder` and `observability`
+# (allowed by rbac.yaml) and
+# scrapes the ones that opt in via annotations on their pod template:
+#   prometheus.io/scrape: "true"   <- required to be scraped at all
+#   prometheus.io/port:   "8002"   <- which port serves /metrics
+#   prometheus.io/path:   "/x"     <- optional, defaults to /metrics
+# New replicas and restarted pods (new IPs) are picked up automatically —
+# the actual payoff of running Prometheus on Kubernetes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: observability
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+
+    scrape_configs:
+      - job_name: tinder-pods
+        # role: pod = one candidate target per pod (per declared port).
+        # Limited to these namespaces — matching the namespaced Roles in
+        # rbac.yaml. Same opt-in rule in both: only annotated pods are kept.
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              # 2026-11-13: replaced — added observability so opted-in
+              # monitoring pods (postgres-exporter first) are discovered too.
+              # names: [tinder]
+              names: [tinder, observability]
+
+        # Relabeling: rules applied to each discovered pod BEFORE scraping,
+        # turning the raw facts Kubernetes reports (__meta_* labels) into
+        # scrape decisions and final metric labels.
+        relabel_configs:
+          # 1. Opt-in: drop every pod not annotated prometheus.io/scrape=true
+          #    (postgres, redis, cassandra, redpanda, completed Jobs, ...).
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+
+          # 2. Scrape address = pod IP + the annotated port (replacing
+          #    whatever port discovery guessed).
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+
+          # 3. Optional custom path; untouched (default /metrics) if absent.
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            regex: (.+)
+            target_label: __metrics_path__
+
+          # 4. job = the pod's `app` label (auth-service, direct-msg, ...) —
+          #    the same job names compose's per-service jobs produced, so the
+          #    Grafana dashboard's `by (job)` queries keep working unchanged.
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: job
+
+          # 5. New labels compose never needed: which pod and namespace a
+          #    series came from — what tells 2+ replicas of one service apart.
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace

@@ -1,0 +1,68 @@
+# How the OpenTelemetry Collector runs — the k8s equivalent of
+# docker-compose.yml's `otel-collector` block. Its config (receivers ->
+# exporters fan-out) lives in configmap.yaml next to this file; how other
+# pods reach it lives in service.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  # Stateless forwarder (receives spans, passes them on, stores nothing), so
+  # it could scale horizontally later with no changes; one is plenty here.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          # Same pinned version as docker-compose, so trace behaviour doesn't
+          # change as part of the move. Public Docker Hub image — kind nodes
+          # pull it directly (side-load via kind/ctr only if pulling fails).
+          image: otel/opentelemetry-collector-contrib:0.112.0
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317 # what every service's SDK sends to
+            - name: otlp-http
+              containerPort: 4318 # fallback intake
+            - name: health
+              containerPort: 13133 # health_check extension (configmap.yaml)
+          volumeMounts:
+            # The ConfigMap's `config.yaml` key appears as a file in this
+            # directory — the contrib image's default config path, so no
+            # --config flag is needed (same path compose mounted to).
+            - name: config
+              mountPath: /etc/otelcol-contrib
+          readinessProbe:
+            # Gates traffic: the Service only sends spans once this passes.
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+          livenessProbe:
+            # Restarts the container if the Collector hangs.
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 10
+          resources:
+            # The Collector buffers spans in memory while forwarding; if Tempo
+            # or Jaeger slows down, that buffer grows. The limit means a
+            # runaway Collector gets restarted rather than starving every
+            # other pod on its node. (Alternative not taken yet: the
+            # Collector's own memory_limiter processor — more graceful, but
+            # another knob to tune.)
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config

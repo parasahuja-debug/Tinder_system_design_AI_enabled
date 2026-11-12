@@ -20,6 +20,10 @@ spec:
     metadata:
       labels:
         app: profile-service
+      # Prometheus opt-in markers — same as auth-service's deployment.yaml.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
     spec:
       containers:
         - name: profile-service

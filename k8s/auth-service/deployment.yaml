@@ -12,6 +12,12 @@ spec:
     metadata:
       labels:
         app: auth-service
+      # Opt-in markers for Prometheus pod discovery (see
+      # k8s/observability/prometheus/configmap.yaml): scrape this pod's
+      # /metrics on this port.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8002"
     spec:
       containers:
         - name: auth-service
