@@ -1,0 +1,13 @@
+# Stable in-cluster address; Traefik's HTTPRoute targets this.
+apiVersion: v1
+kind: Service
+metadata:
+  name: support-chatbot-service
+  namespace: tinder
+spec:
+  selector:
+    app: support-chatbot-service
+  ports:
+    - name: http
+      port: 8008
+      targetPort: 8008

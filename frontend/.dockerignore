@@ -1,0 +1,5 @@
+# Keep the build context small and reproducible: dependencies are installed
+# fresh by `npm ci` inside the image, and dist/ is rebuilt there too.
+node_modules
+dist
+.angular

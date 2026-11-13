@@ -1,0 +1,32 @@
+# Catch-all external door: every path NOT claimed by an API route goes to the
+# frontend. Gateway API picks the most specific (longest) matching prefix, so
+# /auth, /profile, /chat/ws, ... still reach their services, and `/`,
+# /discover (Angular's own client route), /main-xyz.js etc. land here.
+#
+# Same origin for UI and API is why the frontend needs no API base URL or
+# CORS: it calls relative paths, which come back through this same gateway.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: frontend
+  namespace: tinder
+spec:
+  parentRefs:
+    - name: traefik-gateway
+      namespace: traefik
+      sectionName: web
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        # Unguarded door: strip any client-sent identity header, same rule as
+        # k8s/auth-service/httproute.yaml.
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            remove:
+              - X-User-Id
+      backendRefs:
+        - name: frontend
+          port: 80

@@ -1,0 +1,47 @@
+# The Angular frontend: static files served by nginx (image built from
+# frontend/Dockerfile). Reached only through Traefik — see httproute.yaml,
+# which sends every path no API route claims to this Service.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: tinder
+spec:
+  # Static files, no state: two replicas is free availability (a rollout
+  # or node loss never takes the UI down).
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          # KIND-SPECIFIC: locally built image, side-loaded into the nodes
+          # with `kind load docker-image tinder-frontend:latest --name tinder`
+          # (IfNotPresent so the node never tries Docker Hub). On a real
+          # cloud: push to a registry (ACR/ECR/GCR) and reference it here.
+          image: tinder-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /healthz # nginx.conf's cheap health location
+              port: http
+            initialDelaySeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi

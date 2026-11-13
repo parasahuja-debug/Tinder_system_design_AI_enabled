@@ -9,7 +9,16 @@ metadata:
   name: matcher-consumer
   namespace: tinder
 spec:
-  replicas: 1
+  # 2026-11-13: replaced — 2 replicas to actually exercise Phase 1's
+  # partitioned design: both consumers join consumer group
+  # matcher-consumer-group, Redpanda splits the `swipes` topic's 6
+  # partitions between them (3 each), and because each swipe's partition
+  # key is the sorted user pair, both halves of a potential match always
+  # land on the same partition -> the same consumer, so no race between
+  # replicas. Fixed (not autoscaled): more than 6 consumers would sit idle,
+  # since a partition is never shared within a group.
+  # replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: matcher-consumer

@@ -1,0 +1,82 @@
+# The support chatbot (RAG over README.md + per-user memory), k8s
+# equivalent of docker-compose.yml's support-chatbot-service.
+#
+# Apply order:
+#   1. (2026-11-13: step retired — the k8s/ollama alias Service was replaced
+#      by calling host.docker.internal directly; see configmap.yaml.)
+#      # kubectl apply -f k8s/ollama/service.yaml
+#      Ollama itself must be running on the Mac with the three models.
+#   2. README ConfigMap, generated from the real file (not a hand copy — it's
+#      edited often and a copy would drift):
+#        kubectl create configmap chatbot-readme -n tinder \
+#          --from-file=README.md --dry-run=client -o yaml | kubectl apply -f -
+#      Re-run after README edits, then `kubectl rollout restart` this.
+#   3. this folder (configmap, deployment, service, httproute)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: support-chatbot-service
+  namespace: tinder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: support-chatbot-service
+  template:
+    metadata:
+      labels:
+        app: support-chatbot-service
+      # No prometheus.io annotations: this service was scoped out of the
+      # Day 6 metrics pass (no /metrics route); LangSmith covers its
+      # LLM-facing behaviour instead.
+    spec:
+      containers:
+        - name: support-chatbot-service
+          # KIND-SPECIFIC: locally built, side-loaded with
+          # `kind load docker-image tinder-support-chatbot-service:latest --name tinder`.
+          image: tinder-support-chatbot-service:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: support-chatbot-service-config
+            # LangSmith keys — optional so the pod starts without them.
+            - secretRef:
+                name: support-chatbot-service-secret
+                optional: true
+          ports:
+            - name: http
+              containerPort: 8008
+          volumeMounts:
+            # Just the one file, at the exact path config.README_PATH reads,
+            # without hiding the rest of /app (the service's code).
+            - name: readme
+              mountPath: /app/README.md
+              subPath: README.md
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            # Startup indexes the README (embeddings) and starts the MCP
+            # subprocess (npx), so it needs longer than the other services.
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 20
+            failureThreshold: 4
+          resources:
+            # Embedding model (fastembed/ONNX) + Node MCP subprocess live in
+            # this pod; the LLMs themselves run in Ollama, outside it.
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              memory: 1536Mi
+      volumes:
+        - name: readme
+          configMap:
+            name: chatbot-readme

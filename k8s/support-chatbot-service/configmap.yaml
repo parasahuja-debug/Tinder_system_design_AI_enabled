@@ -1,0 +1,25 @@
+# Non-secret settings for support-chatbot-service — mirrors
+# docker-compose.yml's support-chatbot-service.environment block, minus the
+# LangSmith values (secret.yaml.example).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: support-chatbot-service-config
+  namespace: tinder
+data:
+  DATABASE_URL: "postgresql://postgres:postgres@db:5432/tinder"
+  AUTH_SERVICE_URL: "http://auth-service:8002"
+  # 2026-11-13: replaced — the `ollama` ExternalName alias got HTTP 403:
+  # Ollama (bound to the Mac's loopback) rejects requests whose Host header
+  # isn't a name it trusts (localhost, *.internal, ...), as DNS-rebinding
+  # protection. host.docker.internal is trusted and is what Docker Desktop
+  # routes to the Mac. KIND/DOCKER-DESKTOP-SPECIFIC: on a real cloud this
+  # becomes the hosted model endpoint's URL.
+  # OLLAMA_HOST: "http://ollama:11434"
+  OLLAMA_HOST: "http://host.docker.internal:11434"
+  CHAT_MODEL: "llama3.2"
+  MEM0_LLM_MODEL: "mistral:7b-instruct-v0.3-q4_K_M"
+  MEM0_EMBED_MODEL: "nomic-embed-text"
+  # Where the README ConfigMap is mounted (see deployment.yaml) — the RAG
+  # source document, same path compose bind-mounted it to.
+  README_PATH: "/app/README.md"

@@ -1,0 +1,48 @@
+# Autoscaling for direct-msg, driven by its OWN Prometheus metrics — the
+# Phase 6 "Prometheus-driven autoscaling" item: the same http_requests_total
+# counter that feeds Grafana's request-rate panel now also decides how many
+# replicas run. Requires KEDA (install: see k8s/keda-values.yaml).
+#
+# KEDA turns this into a regular HorizontalPodAutoscaler (keda-hpa-direct-msg)
+# and owns the Deployment's replica count — which is why
+# k8s/direct-msg/deployment.yaml no longer sets `replicas`.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: direct-msg
+  namespace: tinder
+spec:
+  scaleTargetRef:
+    name: direct-msg # the Deployment to scale
+  # Floor of 2, not 1: two replicas is the point of the Redis Pub/Sub
+  # fan-out design (Phase 2), and it keeps chat available during a pod
+  # restart. Ceiling of 4: plenty for this cluster's size.
+  minReplicaCount: 2
+  maxReplicaCount: 4
+  # 2026-11-13: corrected comment — KEDA warns pollingInterval does NOT drive
+  # scaling here (only with minReplicaCount 0 / idleReplicaCount / cached
+  # metrics); the HPA queries KEDA's metrics API on its own ~15s loop. It
+  # only sets how often KEDA refreshes this object's status/events.
+  # pollingInterval: 15 # how often KEDA re-runs the query (s); matches scrape interval
+  pollingInterval: 15
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          # Default is 300s. 60s keeps a load test's scale-down observable
+          # in minutes; still long enough to avoid flapping on brief dips.
+          stabilizationWindowSeconds: 60
+  triggers:
+    - type: prometheus
+      metadata:
+        # Cross-namespace: Prometheus lives in observability.
+        serverAddress: http://prometheus.observability:9090
+        # Real request rate across ALL direct-msg pods, excluding Prometheus
+        # scrapes (/metrics) and kubelet probes (/health) — otherwise the
+        # monitoring itself would count as load. WebSocket frames don't
+        # pass through the HTTP middleware that counts requests, so this is
+        # effectively chat-history traffic.
+        query: sum(rate(http_requests_total{job="direct-msg", path!~"/metrics|/health"}[1m]))
+        # Target per replica (AverageValue): desired = ceil(rate / 2), clamped
+        # to [min, max]. E.g. ~7 req/s -> 4 replicas; idle -> 2.
+        threshold: "2"

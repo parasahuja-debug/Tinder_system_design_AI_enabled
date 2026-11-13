@@ -1,0 +1,24 @@
+# Helm values for KEDA (Phase 6 autoscaling) — kept next to
+# traefik-values.yaml so every cluster add-on's install is reproducible.
+#
+# Install / upgrade (pinned chart version):
+#   helm repo add kedacore https://kedacore.github.io/charts
+#   helm upgrade --install keda kedacore/keda -n keda --create-namespace \
+#     --version 2.21.0 -f k8s/keda-values.yaml
+#
+# What KEDA is: an operator that turns an external signal — here a
+# Prometheus query — into a Kubernetes autoscaling decision. Each
+# ScaledObject (e.g. k8s/direct-msg/scaledobject.yaml) names a Deployment
+# and a query; KEDA creates and drives a normal HorizontalPodAutoscaler for
+# it, serving the query result through the external-metrics API.
+#
+# Chosen over HPA + prometheus-adapter: with the adapter, every metric has
+# to be mapped into the custom-metrics API in a separate rules config; with
+# KEDA the query lives in the one small object next to the service it
+# scales. Cloud-portable: plain Helm chart, no kind-specific settings (AKS
+# even offers KEDA as a managed add-on).
+#
+# Chart defaults are fine for this cluster — nothing overridden yet. The
+# operator reaches Prometheus at prometheus.observability:9090 (no auth, in-
+# cluster only), configured per ScaledObject, not here.
+{}

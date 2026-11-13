@@ -4,7 +4,14 @@ metadata:
   name: direct-msg
   namespace: tinder
 spec:
-  replicas: 1
+  # 2026-11-13: replaced — replica count is now owned by the KEDA
+  # ScaledObject (k8s/direct-msg/scaledobject.yaml: min 2, max 4, driven by
+  # this service's Prometheus request rate). Leaving a fixed `replicas` here
+  # would make every `kubectl apply` of this file fight the autoscaler.
+  # 2+ replicas is safe because chat delivery fans out via Redis Pub/Sub
+  # (each replica subscribes to chat:<user_id> for its own sockets), not an
+  # in-process dict.
+  # replicas: 1
   selector:
     matchLabels:
       app: direct-msg

@@ -1,0 +1,14 @@
+# Stable in-cluster address for the frontend pods; Traefik's HTTPRoute
+# targets this, never the pods directly.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: tinder
+spec:
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

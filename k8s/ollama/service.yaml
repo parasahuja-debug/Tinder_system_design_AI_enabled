@@ -1,0 +1,32 @@
+# 2026-11-13: retired (whole file commented out, not deleted) — the
+# ExternalName alias works at the DNS level, but the Mac's Ollama answers
+# 403 to Host: ollama (it only trusts localhost / *.internal hostnames unless
+# reconfigured to listen on all interfaces, which would expose it on the
+# LAN). support-chatbot-service now calls http://host.docker.internal:11434
+# directly — see k8s/support-chatbot-service/configmap.yaml. Removed from
+# the cluster with `kubectl delete -f` before commenting out.
+#
+# # `ollama` as a stable in-cluster name for an LLM server that runs OUTSIDE
+# # the cluster — here, Ollama installed natively on the developer's Mac (it
+# # already holds the chatbot's models: llama3.2, mistral:7b-instruct-v0.3-
+# # q4_K_M, nomic-embed-text). support-chatbot-service keeps calling
+# # http://ollama:11434, exactly as under compose.
+# #
+# # ExternalName = a DNS alias, no proxying: "ollama" resolves to
+# # host.docker.internal, which Docker Desktop routes to the Mac host (verified
+# # from a pod: GET /api/version answered).
+# #
+# # Why not run Ollama in the cluster: it would re-download ~7GB of models
+# # into a node and compete with every other pod for the Docker VM's ~12GB RAM.
+# #
+# # KIND/DOCKER-DESKTOP-SPECIFIC swap point: on a real cloud, change
+# # externalName to a hosted model endpoint (or replace this with a GPU
+# # Deployment); the chatbot's config doesn't change.
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: ollama
+#   namespace: tinder
+# spec:
+#   type: ExternalName
+#   externalName: host.docker.internal

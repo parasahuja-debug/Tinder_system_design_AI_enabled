@@ -51,8 +51,29 @@ spec:
               command: ["sh", "-c", "rpk cluster health | grep -q 'Healthy:.*true'"]
             initialDelaySeconds: 10
             periodSeconds: 5
+            # 2026-11-13: added — the default 1s timeout was routinely exceeded
+            # by `rpk cluster health` when the cluster was CPU-busy. Readiness
+            # failing only pauses traffic (never restarts), so a generous
+            # timeout is safe here.
+            timeoutSeconds: 10
+          # 2026-11-13: replaced — this liveness check (same rpk command, 1s
+          # default timeout, 3 failures) killed Redpanda 5 times under CPU
+          # load, and because Redpanda has no persistent storage, every
+          # restart wiped the swipes/matches topics and silently stopped
+          # async matching. Liveness should only catch a truly hung process,
+          # so it's now a cheap "is the Kafka port accepting connections"
+          # check with a ~2 minute tolerance; the full cluster-health query
+          # stays on readiness above. (The real cure for the data loss is
+          # persistent storage — tracked separately.)
+          # livenessProbe:
+          #   exec:
+          #     command: ["sh", "-c", "rpk cluster health | grep -q 'Healthy:.*true'"]
+          #   initialDelaySeconds: 15
+          #   periodSeconds: 10
           livenessProbe:
-            exec:
-              command: ["sh", "-c", "rpk cluster health | grep -q 'Healthy:.*true'"]
+            tcpSocket:
+              port: 9092
             initialDelaySeconds: 15
-            periodSeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
